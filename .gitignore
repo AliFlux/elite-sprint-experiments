@@ -1,0 +1,15 @@
+node_modules
+__pycache__
+raw
+
+
+
+*.mp4
+*.jpg
+*.mpg
+*.glb
+*.bin
+*.ts
+*.vtt
+
+*-metadata.txt

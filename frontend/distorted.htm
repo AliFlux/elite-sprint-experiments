@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <title>Distorted</title>
+    <script src="https://cesium.com/downloads/cesiumjs/releases/1.130.1/Build/Cesium/Cesium.js"></script>
+    <link href="https://cesium.com/downloads/cesiumjs/releases/1.130.1/Build/Cesium/Widgets/widgets.css"
+        rel="stylesheet">
+    <style>
+        html,
+        body,
+        #cesiumContainer {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="cesiumContainer"></div>
+
+    <script src="permalink.js"></script>
+    <script src="misc.js"></script>
+    <script src="perspective.js"></script>
+    <script src="distorted-canvas.js"></script>
+    <script type="module">
+        Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJlOWMwNjYyMS02MWE0LTRiNmItYTEwMy1kOGQ5OTNkNWQyYWQiLCJpZCI6MTQ1NTAsInNjb3BlcyI6WyJhc3IiLCJnYyJdLCJpYXQiOjE1NjU3ODA0MTl9.jVStXPdk1PpSGewonbPk3V2TXWVmb6Hom_ExapmzavM';
+
+        // http://localhost:8000/distorted.htm#camera=-68.902453,35.859453,1723708,313.473,-81.972,359.824
+        
+        // Initialize Cesium Viewer with terrain
+        const viewer = new Cesium.Viewer("cesiumContainer", {
+            terrainProvider: await Cesium.createWorldTerrainAsync(),
+            hash: true,
+        });
+        window.viewer = viewer;
+
+        if (window.addPermalink) {
+            addPermalink(window, Cesium);
+        }
+
+        await addDraggablePolygon(viewer)
+
+
+
+
+    </script>
+</body>
+
+</html>

@@ -1,0 +1,3 @@
+;FFMETADATA1
+encoder=Lavf62.5.100
+[STREAM]

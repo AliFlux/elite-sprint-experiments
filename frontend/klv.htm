@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <title>KLV</title>
+    <script src="https://cesium.com/downloads/cesiumjs/releases/1.130.1/Build/Cesium/Cesium.js"></script>
+    <link href="https://cesium.com/downloads/cesiumjs/releases/1.130.1/Build/Cesium/Widgets/widgets.css"
+        rel="stylesheet">
+    <style>
+        html,
+        body,
+        #cesiumContainer {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="cesiumContainer"></div>
+
+    <script src="permalink.js"></script>
+    <script src="decimal.js"></script>
+    <script src="perspective.js"></script>
+    <script src="footprint.js"></script>
+    <script src="metadata.js"></script>
+    <script src="misc.js"></script>
+    <script type="module">
+        Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJlOWMwNjYyMS02MWE0LTRiNmItYTEwMy1kOGQ5OTNkNWQyYWQiLCJpZCI6MTQ1NTAsInNjb3BlcyI6WyJhc3IiLCJnYyJdLCJpYXQiOjE1NjU3ODA0MTl9.jVStXPdk1PpSGewonbPk3V2TXWVmb6Hom_ExapmzavM';
+
+        // Initialize Cesium Viewer with terrain
+        const viewer = new Cesium.Viewer("cesiumContainer", {
+            terrainProvider: await Cesium.createWorldTerrainAsync(),
+            hash: true,
+            shouldAnimate: true,
+        });
+        window.viewer = viewer;
+
+        if (window.addPermalink) {
+            addPermalink(window, Cesium);
+        }
+
+        // truck
+        // // http://localhost:8000/klv.htm#camera=-104.852956,41.106818,2071,85.413,-53.955,0.003
+
+        // dam
+        // http://localhost:8000/klv.htm#camera=-80.283638,27.109028,367,328.685,-53.256,0.000
+
+        // //         const metadata =   {
+        // //     "Precision Time Stamp": 1245257585099653,
+        // //     "UAS Datalink LS Version Number": 1,
+        // //     "Platform Heading Angle": 86.10666056305791,
+        // //     "Platform Pitch Angle": 3.359477523117775,
+        // //     "Platform Roll Angle": 0.5157628101443521,
+        // //     "Image Source Sensor": "EON",
+        // //     "Image Coordinate System": "Geodetic WGS84",
+        // //     "Sensor Latitude": 54.68132328460055,
+        // //     "Sensor Longitude": -110.1685597701783,
+        // //     "Sensor True Altitude": 1532.272831311513,
+        // //     "Sensor Horizontal Field of View": 0.36530098420691237,
+        // //     "Sensor Vertical Field of View": 0.2059967956054017,
+        // //     "Sensor Relative Azimuth Angle": 46.10314941175821,
+        // //     "Sensor Relative Elevation Angle": -4.41094972398642,
+        // //     "Sensor Relative Roll Angle": 358.2026063087868,
+        // //     "Slant Range": 10928.624544974562,
+        // //     "Target Width": 0,
+        // //     "Frame Center Latitude": 54.74912345164881,
+        // //     "Frame Center Longitude": -110.0466381153309,
+        // //     "Frame Center Elevation": -4.52277409018086,
+        // //     "Target Location Latitude": 54.74912345164881,
+        // //     "Target Location Longitude": -110.0466381153309,
+        // //     "Target Location Elevation": -4.52277409018086,
+        // //     "Platform Ground Speed": 46,
+        // //     "Ground Range": 10820.674945325747,
+        // //     "Checksum": 7263
+        // //   };
+
+        // // const metadata = {
+        // //     "Precision Time Stamp": 1245257673850651,
+        // //     "UAS Datalink LS Version Number": 1,
+        // //     "Platform Heading Angle": 82.89860379949644,
+        // //     "Platform Pitch Angle": 3.6091189306314284,
+        // //     "Platform Roll Angle": 0.508133182775353,
+        // //     "Image Source Sensor": "EON",
+        // //     "Image Coordinate System": "Geodetic WGS84",
+        // //     "Sensor Latitude": 54.67945634139676,
+        // //     "Sensor Longitude": -110.10711648040783,
+        // //     "Sensor True Altitude": 1530.147249561303,
+        // //     "Sensor Horizontal Field of View": 0.36530098420691237,
+        // //     "Sensor Vertical Field of View": 0.2059967956054017,
+        // //     "Sensor Relative Azimuth Angle": 26.801605202909933,
+        // //     "Sensor Relative Elevation Angle": -5.5106201327920985,
+        // //     "Sensor Relative Roll Angle": 357.27346815105375,
+        // //     "Slant Range": 8695.59357145233,
+        // //     "Target Width": 0,
+        // //     "Frame Center Latitude": 54.74883448553683,
+        // //     "Frame Center Longitude": -110.04651506899228,
+        // //     "Frame Center Elevation": -5.433737697413562,
+        // //     "Target Location Latitude": 54.74883448553683,
+        // //     "Target Location Longitude": -110.04651506899228,
+        // //     "Target Location Elevation": -5.433737697413562,
+        // //     "Platform Ground Speed": 44,
+        // //     "Ground Range": 8559.894051533167,
+        // //     "Checksum": 36278
+        // //     };
+
+        // const metadata = {
+        //     "UNIX Time Stamp": 1348087826484970,
+        //     "Mission ID": "ESRI_Metadata_Collect",
+        //     "Platform Tail Number": "N97826",
+        //     "Platform Heading Angle": 157.60128,
+        //     "Platform Pitch Angle": 3.3906064,
+        //     "Platform Roll Angle": -6.491287,
+        //     "Platform Designation": "C208B",
+        //     "Image Source Sensor": "",
+        //     "Image Coordinate System": "",
+        //     "Sensor Latitude": 41.095740032,
+        //     "Sensor Longitude": -104.8702156939,
+        //     "Sensor True Altitude": 2933.03,
+        //     "Sensor Horizontal Field of View": 3.0652,
+        //     "Sensor Vertical Field of View": 1.7221,
+        //     "Sensor Relative Azimuth Angle": 254.2500001598,
+        //     "Sensor Relative Elevation Angle": -20.382812489,
+        //     "Sensor Relative Roll Angle": 0,
+        //     "Slant Range": 2291.8906,
+        //     "Target Width": 0,
+        //     "Frame Center Latitude": 41.1068024259,
+        //     "Frame Center Longitude": -104.8510062997,
+        //     "Frame Center Elevation": 1867.2,
+        //     "Offset Corner Latitude Point 1": 0.0008675,
+        //     "Offset Corner Longitude Point 1": 0.0002678,
+        //     "Offset Corner Latitude Point 2": -0.0000343,
+        //     "Offset Corner Longitude Point 2": 0.0011788,
+        //     "Offset Corner Latitude Point 3": -0.0008171,
+        //     "Offset Corner Longitude Point 3": -0.0002495,
+        //     "Offset Corner Latitude Point 4": 0.0000343,
+        //     "Offset Corner Longitude Point 4": -0.0011101,
+        //     "Generic Flag Data 01": 0,
+        //     "Security Local Metadata Set": {
+        //         "1": 1,
+        //         "2": 1,
+        //         "3": "//CA",
+        //         "4": "",
+        //         "5": "",
+        //         "6": "CA",
+        //         "21": "\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000",
+        //         "22": 5
+        //     },
+        //     "Platform Ground Speed": 0,
+        //     "Platform Call Sign": "Firebird",
+        //     "UAS LS Version Number": 1,
+        //     "Event Start Time - UTC": 0
+        // }
+
+        // // const metadata = {
+        // //     "UNIX Time Stamp": 1348087837673300,
+        // //     "Mission ID": "ESRI_Metadata_Collect",
+        // //     "Platform Tail Number": "N97826",
+        // //     "Platform Heading Angle": 138.21561,
+        // //     "Platform Pitch Angle": 5.6013672,
+        // //     "Platform Roll Angle": -9.0929899,
+        // //     "Platform Designation": "C208B",
+        // //     "Image Source Sensor": "",
+        // //     "Image Coordinate System": "",
+        // //     "Sensor Latitude": 41.0903256997,
+        // //     "Sensor Longitude": -104.8658835072,
+        // //     "Sensor True Altitude": 2938.19,
+        // //     "Sensor Horizontal Field of View": 3.0652,
+        // //     "Sensor Vertical Field of View": 1.7221,
+        // //     "Sensor Relative Azimuth Angle": 259.3437501088,
+        // //     "Sensor Relative Elevation Angle": -18.4140625216,
+        // //     "Sensor Relative Roll Angle": 0,
+        // //     "Slant Range": 2239.6166,
+        // //     "Target Width": 0,
+        // //     "Frame Center Latitude": 41.1039729887,
+        // //     "Frame Center Longitude": -104.8508807387,
+        // //     "Frame Center Elevation": 1876.92,
+        // //     "Offset Corner Latitude Point 1": 0.0008606,
+        // //     "Offset Corner Longitude Point 1": -0.0000046,
+        // //     "Offset Corner Latitude Point 2": 0.0001511,
+        // //     "Offset Corner Longitude Point 2": 0.0011216,
+        // //     "Offset Corner Latitude Point 3": -0.0008126,
+        // //     "Offset Corner Longitude Point 3": 0.0000069,
+        // //     "Offset Corner Latitude Point 4": -0.0001396,
+        // //     "Offset Corner Longitude Point 4": -0.0010575,
+        // //     "Generic Flag Data 01": 0,
+        // //     "Security Local Metadata Set": {
+        // //         "1": 1,
+        // //         "2": 1,
+        // //         "3": "//CA",
+        // //         "4": "",
+        // //         "5": "",
+        // //         "6": "CA",
+        // //         "21": "\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000",
+        // //         "22": 5
+        // //     },
+        // //     "Platform Ground Speed": 0,
+        // //     "Platform Call Sign": "Firebird",
+        // //     "UAS LS Version Number": 1,
+        // //     "Event Start Time - UTC": 0
+        // // };
+
+
+        // window.metadata = metadata;
+        let flown = false;
+
+        await viewer.terrainProvider.readyPromise;
+
+        // Function to check when all terrain tiles are loaded
+        await new Promise((resolve) => {
+            const handler = (remaining) => {
+                if (remaining === 0) {
+                    viewer.scene.globe.tileLoadProgressEvent.removeEventListener(handler);
+                    resolve();
+                }
+            };
+            viewer.scene.globe.tileLoadProgressEvent.addEventListener(handler);
+        });
+
+        const metadataList = new Metadata();
+        await metadataList.load('dam-metadata.txt');
+        const videoElement = await loadVideo("dam.mp4");
+        window.videoElement = videoElement;
+
+        videoElement.currentTime = 135.696348;
+        videoElement.pause();
+
+
+        // const footprint = new Footprint(videoElement, "./reaper.glb");
+        const footprint = new Footprint({
+            // modelUrl: "./reaper.glb",
+            modelUrl: "./quadcopter.glb",
+            // modelUrl: "./gundrone.glb",
+            videoElement: videoElement,
+                
+            // +X -> back
+            // -X -> front
+            // +Y -> right
+            // -Y -> left
+            // +Z -> down
+            // -Z -> up
+            sensorRelativePosition: [0, 0, 0],
+            // sensorRelativePosition: [-4.7, 0, 1.3],
+        });
+        window.footprint = footprint;
+
+        // Add to Cesium viewer (waits for video readiness internally)
+        await footprint.add(viewer);
+
+        const onFrame = (now, videoMetadata) => {
+            // console.log('Video frame time:', videoMetadata.mediaTime);
+
+            
+            const metadata = metadataList.getLDS(videoMetadata.mediaTime);
+            // Update every frame or metadata change
+            footprint.update(metadata);
+
+            videoElement.requestVideoFrameCallback(onFrame);
+
+            // if(!flown) {
+            //     // Convert elevation to Cesium's Cartesian3 position
+            //     const targetPosition = Cesium.Cartesian3.fromDegrees(
+            //         metadata["Frame Center Longitude"],
+            //         metadata["Frame Center Latitude"],
+            //         metadata["Frame Center Elevation"]
+            //     );
+
+            //     // Fly the camera to the target location
+            //     viewer.camera.flyTo({
+            //         destination: targetPosition,
+            //         orientation: {
+            //             heading: Cesium.Math.toRadians(0.0), // facing north
+            //             pitch: Cesium.Math.toRadians(-30.0), // look slightly down
+            //             roll: 0.0
+            //         },
+            //         duration: 1
+            //     });
+            //     flown = true;
+            // }
+
+        }
+
+        videoElement.requestVideoFrameCallback(onFrame);
+
+
+
+
+    </script>
+</body>
+
+</html>
