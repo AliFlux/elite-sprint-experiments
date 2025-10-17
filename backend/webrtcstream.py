@@ -1,0 +1,280 @@
+import argparse
+import asyncio
+from fractions import Fraction
+import json
+import logging
+from aiohttp import web
+from aiortc import MediaStreamError, RTCPeerConnection, RTCSessionDescription, MediaStreamTrack
+from gi.repository import Gst, GLib
+import numpy as np
+from PIL import Image
+from io import BytesIO
+
+from aiortc.codecs.h264 import H264Decoder, H264Encoder, h264_depayload
+from aiortc.codecs.vpx import Vp8Encoder
+
+Gst.init(None)
+
+# -------------------------------------------------------
+# Parameters
+# -------------------------------------------------------
+# VIDEO_TS = r"D:/Downloads/QGISFMV_Samples/MISB/falls.ts"
+# VIDEO_TS = r"E:/EliteSPRINT/elite-sprint-experiments/frontend/truck.ts"
+VIDEO_TS = r"D:/Downloads/MISB.ts"
+pcs = set()
+
+# -------------------------------------------------------
+# Video track wrapper around GStreamer appsink
+# -------------------------------------------------------
+from fractions import Fraction
+from aiortc import MediaStreamTrack
+from gi.repository import Gst
+import asyncio
+import numpy as np
+from av import Packet, VideoFrame
+
+
+class GStreamerVideoTrack(MediaStreamTrack):
+
+    kind = "video"
+
+    def __init__(self, appsink):
+        super().__init__()  # don't forget this!
+        self.appsink = appsink
+        self._pts = 0
+        self._time_base = Fraction(1, 30)
+
+        
+        img = np.zeros((300, 500, 3), dtype=np.uint8)
+        img[:] = (0, 0, 255)  # BGR for red
+
+        encoder = Vp8Encoder()
+        frame = VideoFrame.from_ndarray(img, format="bgr24")
+        frame.pts = self._pts
+        frame.time_base = self._time_base
+        bytes_list = encoder.encode(frame)
+        raw_bytes = b"".join(bytes_list[0])
+
+        # print(raw_bytes)
+
+        # # Wrap into VideoFrame
+        # self._current_frame = VideoFrame.from_ndarray(img, format="bgr24")
+        self._current_frame = Packet(raw_bytes)
+        self._current_frame.pts = self._pts
+        self._current_frame.time_base = self._time_base
+
+        # img = np.zeros((300, 500, 3), dtype=np.uint8)
+        # img[:] = (0, 0, 255)  # BGR for red
+        
+                
+        # # Convert from OpenCV BGR to RGB
+        # img_rgb = img[..., ::-1]
+
+        # # Save as JPEG in memory
+        # buffer = BytesIO()
+        # Image.fromarray(img_rgb).save(buffer, format="JPEG")
+        # jpg_bytes = buffer.getvalue()
+
+        # # pkt = Packet(jpg_bytes)
+        # pkt = Packet(bytes())
+        # pkt.pts = self._pts
+        # pkt.time_base = self._time_base # TODO get from stream FPS
+
+        # self._current_frame = pkt
+
+    async def recv(self):
+        self._current_frame.pts = self._pts
+
+        loop = asyncio.get_event_loop()
+        sample = await loop.run_in_executor(None, self._pull_sample)
+        if sample is None:
+            return self._current_frame
+
+        # print(sample)
+
+        buf = sample.get_buffer()
+        caps = sample.get_caps()
+        structure = caps.get_structure(0)
+        success, map_info = buf.map(Gst.MapFlags.READ)
+        if success is None:
+            return self._current_frame
+        
+        # width = structure.get_value("width")
+        # height = structure.get_value("height")
+        # expected = width * height * 3
+        # arr = np.frombuffer(map_info.data, dtype=np.uint8)
+        # arr = arr[:expected]
+        # arr = arr.reshape((height, width, 3))
+        # frame = VideoFrame.from_ndarray(arr, format="rgb24")
+        # self._pts += 1
+        # frame.pts = self._pts
+        # frame.time_base = self._time_base # TODO get from stream FPS
+
+        pkt = Packet(map_info.data)
+        self._pts += 1
+        pkt.pts = self._pts
+        pkt.time_base = self._time_base # TODO get from stream FPS
+
+        self._current_frame = pkt
+        # print("self._current_frame", self._current_frame)
+
+        return self._current_frame
+
+    def _pull_sample(self):
+        # pull next available sample, waiting up to 1/30 sec
+        return self.appsink.emit("try-pull-sample", Gst.SECOND // 30)
+
+# -------------------------------------------------------
+# GStreamer pipeline creation
+# -------------------------------------------------------
+def build_pipeline():
+    pipeline_str = f"""
+        filesrc location="{VIDEO_TS}" !
+        decodebin !
+        videoconvert !
+        vp8enc deadline=1 cpu-used=4 error-resilient=1 target-bitrate=2000 !
+        appsink name=video_sink emit-signals=true sync=false max-buffers=20 drop=true
+    """
+
+    # pipeline_str = f"""
+    #     filesrc location="{VIDEO_TS}" !
+    #     x264enc tune=zerolatency bitrate=1000 speed-preset=superfast !
+    #     rtph264pay config-interval=1 pt=96 !
+    #     appsink name=video_sink emit-signals=true sync=false max-buffers=20 drop=true
+    # """
+
+    
+        # x264enc tune=zerolatency bitrate=1000 speed-preset=superfast !
+        # rtph264pay config-interval=1 pt=96 !
+        # appsink name=video_sink emit-signals=true sync=false max-buffers=20 drop=true
+    
+    pipeline = Gst.parse_launch(pipeline_str)
+    video_sink = pipeline.get_by_name("video_sink")
+    return pipeline, video_sink
+
+# -------------------------------------------------------
+# Serve HTML (client will receive server offer and answer it)
+# -------------------------------------------------------
+INDEX_HTML = """
+<!DOCTYPE html>
+<html>
+<body>
+  <h3>WebRTC Video Streaming</h3>
+  <video id="video" autoplay playsinline controls width="500" height="300"></video>
+  <script>
+    async function start() {
+      const videoEl = document.getElementById("video");
+
+      // 1) Request server offer (server will create the offer)
+      const offerResp = await fetch("/offer", { method: "POST" });
+      const offer = await offerResp.json();
+
+      // 2) Create PeerConnection on client and set track handler
+      const pc = new RTCPeerConnection();
+      pc.ontrack = (e) => {
+        videoEl.srcObject = e.streams[0];
+      };
+
+      // 3) Set remote description (server offer)
+      await pc.setRemoteDescription(offer);
+
+      // 4) create answer and setLocalDescription
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+
+      // 5) send answer back to server
+      await fetch("/answer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(pc.localDescription)
+      });
+    }
+
+    start();
+  </script>
+</body>
+</html>
+"""
+
+# -------------------------------------------------------
+# Aiohttp handlers
+# -------------------------------------------------------
+async def index(request):
+    return web.Response(content_type="text/html", text=INDEX_HTML)
+
+async def offer(request):
+    """
+    Server creates an offer and returns it to the client.
+    Client will setRemoteDescription(offer) and POST an answer to /answer.
+    """
+    pc = RTCPeerConnection()
+    pcs.add(pc)
+    print(f"Created PeerConnection {id(pc)}")
+
+    @pc.on("connectionstatechange")
+    async def on_connectionstatechange():
+        print(f"Connection state: {pc.connectionState}")
+        if pc.connectionState == "failed":
+            await pc.close()
+            pcs.discard(pc)
+
+    # Build GStreamer pipeline and create our MediaStreamTrack wrapper
+    pipeline, video_sink = build_pipeline()
+    track = GStreamerVideoTrack(video_sink)
+
+    # Add the track to the PeerConnection
+    pc.addTrack(track)
+
+    # Start GStreamer pipeline
+    pipeline.set_state(Gst.State.PLAYING)
+
+    # Server creates the offer and sends it to client
+    offer = await pc.createOffer()
+    await pc.setLocalDescription(offer)
+
+    return web.Response(
+        content_type="application/json",
+        text=json.dumps({
+            "sdp": pc.localDescription.sdp,
+            "type": pc.localDescription.type
+        }),
+    )
+
+async def answer(request):
+    """
+    Client posts its answer here. Find the corresponding PeerConnection (last one)
+    and set its remote description.
+    """
+    params = await request.json()
+    sdp = RTCSessionDescription(sdp=params["sdp"], type=params["type"])
+    if not pcs:
+        return web.Response(text="No active PeerConnection", status=400)
+    # For simple single-client usage take the most recent pc
+    pc = list(pcs)[-1]
+    await pc.setRemoteDescription(sdp)
+    return web.Response(text="OK")
+
+async def on_shutdown(app):
+    coros = [pc.close() for pc in pcs]
+    await asyncio.gather(*coros)
+    pcs.clear()
+
+# -------------------------------------------------------
+# Main
+# -------------------------------------------------------
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--port", type=int, default=8080)
+    parser.add_argument("-v", "--verbose", action="count")
+    args = parser.parse_args()
+
+    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO)
+
+    app = web.Application()
+    app.on_shutdown.append(on_shutdown)
+    app.router.add_get("/", index)
+    app.router.add_post("/offer", offer)
+    app.router.add_post("/answer", answer)
+
+    web.run_app(app, host=args.host, port=args.port)
