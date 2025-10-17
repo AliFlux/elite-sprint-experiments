@@ -11,7 +11,9 @@ from PIL import Image
 from io import BytesIO
 
 from aiortc.codecs.h264 import H264Decoder, H264Encoder, h264_depayload
-from aiortc.codecs.vpx import Vp8Encoder
+from aiortc.codecs.vpx import Vp8Encoder, Vp8Decoder
+from aiortc.jitterbuffer import JitterFrame
+from aiortc.rtp import RtpPacket
 
 Gst.init(None)
 
@@ -21,6 +23,7 @@ Gst.init(None)
 # VIDEO_TS = r"D:/Downloads/QGISFMV_Samples/MISB/falls.ts"
 # VIDEO_TS = r"E:/EliteSPRINT/elite-sprint-experiments/frontend/truck.ts"
 VIDEO_TS = r"D:/Downloads/MISB.ts"
+VIDEO_TS = r"D:/Downloads/QGISFMV_Samples/DJI/QGIS_Mexico/Videos/DJI_0872.MP4"
 pcs = set()
 
 # -------------------------------------------------------
@@ -33,96 +36,86 @@ import asyncio
 import numpy as np
 from av import Packet, VideoFrame
 
+import asyncio
+import numpy as np
+from fractions import Fraction
+from aiortc import MediaStreamTrack
+from av import Packet
+import gi
+
+gi.require_version("Gst", "1.0")
+from gi.repository import Gst
 
 class GStreamerVideoTrack(MediaStreamTrack):
-
     kind = "video"
 
     def __init__(self, appsink):
-        super().__init__()  # don't forget this!
+        super().__init__()
         self.appsink = appsink
         self._pts = 0
         self._time_base = Fraction(1, 30)
 
-        
+        # 🔹 Create a valid fallback frame (red image)
         img = np.zeros((300, 500, 3), dtype=np.uint8)
         img[:] = (0, 0, 255)  # BGR for red
+        fallback_data = img.tobytes()
 
-        encoder = Vp8Encoder()
-        frame = VideoFrame.from_ndarray(img, format="bgr24")
-        frame.pts = self._pts
-        frame.time_base = self._time_base
-        bytes_list = encoder.encode(frame)
-        raw_bytes = b"".join(bytes_list[0])
-
-        # print(raw_bytes)
-
-        # # Wrap into VideoFrame
-        # self._current_frame = VideoFrame.from_ndarray(img, format="bgr24")
-        self._current_frame = Packet(raw_bytes)
-        self._current_frame.pts = self._pts
-        self._current_frame.time_base = self._time_base
-
-        # img = np.zeros((300, 500, 3), dtype=np.uint8)
-        # img[:] = (0, 0, 255)  # BGR for red
-        
-                
-        # # Convert from OpenCV BGR to RGB
-        # img_rgb = img[..., ::-1]
-
-        # # Save as JPEG in memory
-        # buffer = BytesIO()
-        # Image.fromarray(img_rgb).save(buffer, format="JPEG")
-        # jpg_bytes = buffer.getvalue()
-
-        # # pkt = Packet(jpg_bytes)
-        # pkt = Packet(bytes())
-        # pkt.pts = self._pts
-        # pkt.time_base = self._time_base # TODO get from stream FPS
-
-        # self._current_frame = pkt
+        pkt = Packet(bytes())
+        pkt.pts = 0
+        pkt.time_base = self._time_base
+        self._current_frame = pkt
 
     async def recv(self):
-        self._current_frame.pts = self._pts
-
+        """
+        Return the next video frame as an AV Packet.
+        Always returns a valid Packet, even if GStreamer has no new sample.
+        """
         loop = asyncio.get_event_loop()
         sample = await loop.run_in_executor(None, self._pull_sample)
-        if sample is None:
-            return self._current_frame
 
-        # print(sample)
+        if sample is None:
+            # No new frame: return the last one (keeps stream alive)
+            return self._current_frame
 
         buf = sample.get_buffer()
-        caps = sample.get_caps()
-        structure = caps.get_structure(0)
-        success, map_info = buf.map(Gst.MapFlags.READ)
-        if success is None:
-            return self._current_frame
         
-        # width = structure.get_value("width")
-        # height = structure.get_value("height")
-        # expected = width * height * 3
-        # arr = np.frombuffer(map_info.data, dtype=np.uint8)
-        # arr = arr[:expected]
-        # arr = arr.reshape((height, width, 3))
-        # frame = VideoFrame.from_ndarray(arr, format="rgb24")
-        # self._pts += 1
-        # frame.pts = self._pts
-        # frame.time_base = self._time_base # TODO get from stream FPS
+        success, map_info = buf.map(Gst.MapFlags.READ)
+        if not success:
+            # mapping failed, keep previous valid frame
+            return self._current_frame
 
-        pkt = Packet(map_info.data)
-        self._pts += 1
-        pkt.pts = self._pts
-        pkt.time_base = self._time_base # TODO get from stream FPS
+        # 🔹 Copy bytes before unmapping (GStreamer will reuse buffer)
+        data = bytes(map_info.data)
+        buf.unmap(map_info)
 
+                
+        # pkt = RtpPacket.parse(data)
+        # print("RTP seq", pkt.sequence_number, "timestamp", pkt.timestamp)
+
+        # decoder = Vp8Decoder()
+        # # frame = decoder.decode(Packet(data))  # Warm up decoder
+        # frame = decoder.decode(JitterFrame(data, 0))  # Warm up decoder
+        # print(frame)
+
+        pkt = Packet(data)
+
+        # print(len(data))
+
+        # 🔹 Use real timestamp if available
+        if buf.pts != Gst.CLOCK_TIME_NONE:
+            pkt.pts = int((buf.pts / Gst.SECOND) / self._time_base)
+        else:
+            self._pts += 1
+            pkt.pts = self._pts
+
+        pkt.time_base = self._time_base
         self._current_frame = pkt
-        # print("self._current_frame", self._current_frame)
-
-        return self._current_frame
+        return pkt
 
     def _pull_sample(self):
-        # pull next available sample, waiting up to 1/30 sec
+        """Try to pull a new sample with a short timeout."""
         return self.appsink.emit("try-pull-sample", Gst.SECOND // 30)
+
 
 # -------------------------------------------------------
 # GStreamer pipeline creation
@@ -132,9 +125,18 @@ def build_pipeline():
         filesrc location="{VIDEO_TS}" !
         decodebin !
         videoconvert !
-        vp8enc deadline=1 cpu-used=4 error-resilient=1 target-bitrate=2000 !
-        appsink name=video_sink emit-signals=true sync=false max-buffers=20 drop=true
+        vp8enc      cpu-used=0  deadline=100000000 !
+        appsink name=video_sink emit-signals=true max-buffers=300 drop=true sync=false
     """
+    
+        # rtpvp8pay2 pt=96 fragmentation-mode=none !
+
+        # filesrc location="{VIDEO_TS}" !
+        # decodebin !
+        # videoconvert !
+        # vp8enc target-bitrate=2000 cpu-used=4 deadline=1 !
+        # rtpvp8pay pt=96 !
+        # appsink name=video_sink emit-signals=true sync=false max-buffers=20 drop=true
 
     # pipeline_str = f"""
     #     filesrc location="{VIDEO_TS}" !
