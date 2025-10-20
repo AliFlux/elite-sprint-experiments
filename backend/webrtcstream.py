@@ -5,6 +5,7 @@ import json
 import logging
 import time
 import threading
+import random
 from aiohttp import web
 from aiortc import MediaStreamError, RTCPeerConnection, RTCSessionDescription, MediaStreamTrack
 from gi.repository import Gst, GLib
@@ -12,10 +13,16 @@ import numpy as np
 from PIL import Image
 from io import BytesIO
 
+import aiortc.codecs
 from aiortc.codecs.h264 import H264Decoder, H264Encoder, h264_depayload
-from aiortc.codecs.vpx import Vp8Encoder, Vp8Decoder
+from aiortc.codecs.vpx import Vp8Encoder, Vp8Decoder, VpxPayloadDescriptor, PACKET_MAX
+from aiortc.codecs.base import Decoder, Encoder
+from aiortc.mediastreams import VIDEO_TIME_BASE, convert_timebase
 from aiortc.jitterbuffer import JitterFrame
 from aiortc.rtp import RtpPacket
+from aiortc.rtcrtpparameters import (
+    RTCRtpCodecParameters,
+)
 
 Gst.init(None)
 
@@ -49,19 +56,50 @@ gi.require_version("Gst", "1.0")
 from gi.repository import Gst
 
 
-def debug_pts(buf, time_base):
-    # Convert to seconds
-    t_sec = buf.pts / Gst.SECOND
+class RawEncoder(Encoder):
+    """
+    A 'raw' encoder that simply outputs uncompressed frame bytes.
+    Useful for debugging pipelines without actual encoding.
+    """
 
-    # Convert to ticks before truncation
-    raw_ticks = t_sec / time_base
+    def __init__(self) -> None:
+        self.picture_id = random.randint(0, (1 << 15) - 1)
 
-    # Truncated integer pts
-    pts_int = int(raw_ticks)
+    def encode(
+        self, frame: VideoFrame, force_keyframe: bool = False
+    ) -> tuple[list[bytes], int]:
+        raise NotImplementedError("RawEncoder does not support frame-level encoding.")
 
-    print(f"GstPTS(ns)={buf.pts:>12} | t={t_sec:>10.6f}s | raw={raw_ticks:>12.3f} | int={pts_int}")
+    def pack(self, packet: Packet) -> tuple[list[bytes], int]:
+        payloads = self._packetize(bytes(packet), self.picture_id)
+        timestamp = convert_timebase(packet.pts, packet.time_base, VIDEO_TIME_BASE)
+        self.picture_id = (self.picture_id + 1) % (1 << 15)
+        return payloads, timestamp
 
-    return pts_int
+    @classmethod
+    def _packetize(cls, buffer: bytes, picture_id: int) -> list[bytes]:
+        payloads = []
+        descr = VpxPayloadDescriptor(
+            partition_start=1, partition_id=0, picture_id=picture_id
+        )
+        length = len(buffer)
+        pos = 0
+        while pos < length:
+            descr_bytes = bytes(descr)
+            size = min(length - pos, PACKET_MAX - len(descr_bytes))
+            payloads.append(descr_bytes + buffer[pos : pos + size])
+            descr.partition_start = 0
+            pos += size
+        return payloads
+    
+def get_encoder(codec: RTCRtpCodecParameters) -> Encoder:
+    mimeType = codec.mimeType.lower()
+    if mimeType == "video/vp8":
+        return RawEncoder()
+    
+    raise ValueError(f"No encoder found for MIME type `{mimeType}`")
+
+aiortc.codecs.get_encoder = get_encoder
 
 class GStreamerVideoTrack(MediaStreamTrack):
     kind = "video"
@@ -164,27 +202,6 @@ def build_pipeline():
         queue max-size-buffers=2 max-size-time=0 max-size-bytes=0 !
         appsink name=video_sink emit-signals=false max-buffers=2 drop=false sync=true
     """
-    
-        # rtpvp8pay2 pt=96 fragmentation-mode=none !
-
-        # filesrc location="{VIDEO_TS}" !
-        # decodebin !
-        # videoconvert !
-        # vp8enc target-bitrate=2000 cpu-used=4 deadline=1 !
-        # rtpvp8pay pt=96 !
-        # appsink name=video_sink emit-signals=true sync=false max-buffers=20 drop=true
-
-    # pipeline_str = f"""
-    #     filesrc location="{VIDEO_TS}" !
-    #     x264enc tune=zerolatency bitrate=1000 speed-preset=superfast !
-    #     rtph264pay config-interval=1 pt=96 !
-    #     appsink name=video_sink emit-signals=true sync=false max-buffers=20 drop=true
-    # """
-
-    
-        # x264enc tune=zerolatency bitrate=1000 speed-preset=superfast !
-        # rtph264pay config-interval=1 pt=96 !
-        # appsink name=video_sink emit-signals=true sync=false max-buffers=20 drop=true
     
     pipeline = Gst.parse_launch(pipeline_str)
     video_sink = pipeline.get_by_name("video_sink")
