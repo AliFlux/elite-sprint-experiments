@@ -1,9 +1,6 @@
-// ---------------------------------------------------------------------------
-// Perspective.js (with optional Sobel filter and configurable background)
-// ---------------------------------------------------------------------------
 
 class Perspective {
-  constructor(ctx2d, source, { filter = "sobel", background = [0, 0, 0, 0] } = {}) {
+  constructor(ctx2d, source, { filter = null, background = [0, 0, 0, 0] } = {}) {
     if (!ctx2d || !source) throw new Error('Perspective: invalid arguments');
 
     const imgW = source.videoWidth || source.width;

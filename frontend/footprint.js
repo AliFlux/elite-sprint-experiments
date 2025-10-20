@@ -77,7 +77,7 @@ class Footprint {
             modelUrl = null,
             showModel = true,
             showRays = true,
-            showOffsetPolygon = true,
+            showOffsetPolygon = false,
             showVideoOverlay = true,
             videoOverlayOpacity = 1,
             modelMinimumPixelSize = 250,
@@ -341,7 +341,7 @@ class Footprint {
         ];
 
         const scene = this.#viewer.scene;
-        const cornerIntersections = [];
+        let cornerIntersections = [];
 
         for (let i = 0; i < cornersLocal.length; i++) {
             const cornerHpr = new HeadingPitchRoll(
@@ -364,7 +364,7 @@ class Footprint {
             });
 
             let intersection = scene.globe.pick(ray, scene);
-            // intersection = undefined;
+            intersection = undefined; // TODO dynamically set based on class props
 
 
             // fallback to ellipsoid intersection if globe.pick fails (e.g. no terrain)

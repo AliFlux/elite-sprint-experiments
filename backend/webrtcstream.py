@@ -3,6 +3,8 @@ import asyncio
 from fractions import Fraction
 import json
 import logging
+import time
+import threading
 from aiohttp import web
 from aiortc import MediaStreamError, RTCPeerConnection, RTCSessionDescription, MediaStreamTrack
 from gi.repository import Gst, GLib
@@ -46,6 +48,22 @@ import gi
 gi.require_version("Gst", "1.0")
 from gi.repository import Gst
 
+
+def debug_pts(buf, time_base):
+    # Convert to seconds
+    t_sec = buf.pts / Gst.SECOND
+
+    # Convert to ticks before truncation
+    raw_ticks = t_sec / time_base
+
+    # Truncated integer pts
+    pts_int = int(raw_ticks)
+
+    print(f"GstPTS(ns)={buf.pts:>12} | t={t_sec:>10.6f}s | raw={raw_ticks:>12.3f} | int={pts_int}")
+
+    return pts_int
+
+
 class GStreamerVideoTrack(MediaStreamTrack):
     kind = "video"
 
@@ -54,79 +72,112 @@ class GStreamerVideoTrack(MediaStreamTrack):
         self.appsink = appsink
         self._pts = 0
         self._time_base = Fraction(1, 30)
+        self._missed_frames = 0
+        self._last_frame_time = time.time()
+        self._decoder = Vp8Decoder()  # ✅ Reuse one decoder
 
-        # 🔹 Create a valid fallback frame (red image)
+        # Fallback (red frame)
         img = np.zeros((300, 500, 3), dtype=np.uint8)
-        img[:] = (0, 0, 255)  # BGR for red
-        fallback_data = img.tobytes()
+        img[:] = (0, 0, 255)
+        self._fallback_frame = img.tobytes()
+        self._current_frame = self._fallback_frame
 
-        pkt = Packet(bytes())
-        pkt.pts = 0
-        pkt.time_base = self._time_base
-        self._current_frame = pkt
+        self._printed_caps = False
 
     async def recv(self):
-        """
-        Return the next video frame as an AV Packet.
-        Always returns a valid Packet, even if GStreamer has no new sample.
-        """
+        # --- pacing ---
+        now = time.time()
+        wait = max(0, (self._last_frame_time + float(self._time_base)) - now)
+
+        # await asyncio.sleep(float(self._time_base))
+        # time.sleep(25 / 1000)  # yield to event loop
+
+        # if wait > 0:
+        #     # await asyncio.sleep(wait)
+        #     # print(float(self._last_frame_time))
+        #     # print(float(self._time_base))
+        #     # print(float(now))
+        #     print(wait)
+        # #     exit()
+
+        self._last_frame_time = time.time()
+
         loop = asyncio.get_event_loop()
         sample = await loop.run_in_executor(None, self._pull_sample)
 
-        if sample is None:
-            # No new frame: return the last one (keeps stream alive)
-            return self._current_frame
+        data = self._current_frame
+        valid_frame = False
 
-        buf = sample.get_buffer()
-        
-        success, map_info = buf.map(Gst.MapFlags.READ)
-        if not success:
-            # mapping failed, keep previous valid frame
-            return self._current_frame
+        if sample is not None:
+            buf = sample.get_buffer()
+            success, map_info = buf.map(Gst.MapFlags.READ)
 
-        # 🔹 Copy bytes before unmapping (GStreamer will reuse buffer)
-        data = bytes(map_info.data)
-        buf.unmap(map_info)
+            # caps = sample.get_caps()
+            # print("🔹 Sample caps:", caps.to_string())
 
-                
-        # pkt = RtpPacket.parse(data)
-        # print("RTP seq", pkt.sequence_number, "timestamp", pkt.timestamp)
+            if success:
+                try:
+                    # ✅ Extract only valid encoded bytes, not entire memory
+                    size = buf.get_size()
+                    data = map_info.data[:size]
 
-        # decoder = Vp8Decoder()
-        # # frame = decoder.decode(Packet(data))  # Warm up decoder
-        # frame = decoder.decode(JitterFrame(data, 0))  # Warm up decoder
-        # print(frame)
+                    # Save as last valid frame
+                    self._current_frame = data
+                    valid_frame = True
+                    self._missed_frames = 0
 
-        pkt = Packet(data)
+                    # Optional: print format once
+                    if not self._printed_caps:
+                        caps = sample.get_caps()
+                        print("🔹 GStreamer sample caps:", caps.to_string())
+                        self._printed_caps = True
 
-        # print(len(data))
+                    # time.sleep(25 / 1000)  # Simulate processing delay
+                    await asyncio.sleep(self._time_base)  # Simulate processing delay
 
-        # 🔹 Use real timestamp if available
-        if buf.pts != Gst.CLOCK_TIME_NONE:
-            pkt.pts = int((buf.pts / Gst.SECOND) / self._time_base)
+                    # # ✅ Decode to verify (optional, for testing)
+                    # frames = self._decoder.decode(
+                    #     JitterFrame(data=data, timestamp=self._pts)
+                    # )
+                    # if not frames:
+                    #     print("⚠️ Decoder got no output for this packet")
+
+                finally:
+                    buf.unmap(map_info)
+            else:
+                self._missed_frames += 1
+                if self._missed_frames % 30 == 0:
+                    print(f"⚠️ Buffer map failed {self._missed_frames} times in a row.")
         else:
-            self._pts += 1
-            pkt.pts = self._pts
+            self._missed_frames += 1
+            if self._missed_frames % 30 == 0:
+                print(f"⚠️ No new samples for {self._missed_frames} frames.")
 
+        # Always create a packet from last valid or fallback frame
+        pkt = Packet(data)
+        self._pts += 1
+        pkt.pts = self._pts
         pkt.time_base = self._time_base
-        self._current_frame = pkt
         return pkt
 
     def _pull_sample(self):
-        """Try to pull a new sample with a short timeout."""
-        return self.appsink.emit("try-pull-sample", Gst.SECOND // 30)
-
+        try:
+            return self.appsink.emit("try-pull-sample", Gst.SECOND // 30)
+            # return self.appsink.emit("pull-sample")
+        except Exception as e:
+            print(f"⚠️ Error pulling sample: {e}")
+            return None
 
 # -------------------------------------------------------
 # GStreamer pipeline creation
 # -------------------------------------------------------
 def build_pipeline():
     pipeline_str = f"""
-        filesrc location="{VIDEO_TS}" !
-        decodebin !
-        videoconvert !
-        vp8enc      cpu-used=0  deadline=100000000 !
-        appsink name=video_sink emit-signals=true max-buffers=300 drop=true sync=false
+        filesrc location="{VIDEO_TS}" ! \
+        decodebin ! \
+        videoconvert ! \
+        vp8enc cpu-used=4 deadline=1 threads=4 ! \
+        appsink name=video_sink emit-signals=false max-buffers=2 drop=true sync=false
     """
     
         # rtpvp8pay2 pt=96 fragmentation-mode=none !
@@ -162,7 +213,7 @@ INDEX_HTML = """
 <html>
 <body>
   <h3>WebRTC Video Streaming</h3>
-  <video id="video" autoplay playsinline controls width="500" height="300"></video>
+  <video id="video" autoplay playsinline controls width="1000" height="600"></video>
   <script>
     async function start() {
       const videoEl = document.getElementById("video");
