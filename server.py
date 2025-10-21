@@ -34,11 +34,11 @@ Gst.init(None)
 # -------------------------------------------------------
 # Parameters
 # -------------------------------------------------------
-# VIDEO_TS = r"D:/Downloads/QGISFMV_Samples/MISB/falls.ts"
-# VIDEO_TS = r"E:/EliteSPRINT/elite-sprint-experiments/frontend/truck.ts"
-VIDEO_TS = r"D:/Downloads/MISB.ts"
-VIDEO_TS = r"D:/Downloads/QGISFMV_Samples/DJI/QGIS_Mexico/Videos/DJI_0872.MP4"
-VIDEO_TS = "D:/Downloads/QGISFMV_Samples/MISB/falls.ts"
+VIDEO_TS = r"./raw/videos/falls.ts"
+VIDEO_TS = r"./raw/videos/truck.ts"
+VIDEO_TS = "./raw/videos/MISB.ts"
+VIDEO_TS = "./raw/videos/DJI_0872.MP4"
+VIDEO_TS = "./raw/videos/falls.ts"
 
 pcs = set()
 
@@ -209,52 +209,11 @@ class KLVTrack:
 
         raw_bytes = map_info.data
 
-        # Try to parse KLV sets using available libraries; fall back to raw bytes if not possible
-        parsed_sets = None
-        try:
-            if misc:
-                parsed_sets = misc.parse_klv_local_sets(raw_bytes)
-        except Exception as e:
-            print("KLV parse failed:", e)
-            parsed_sets = None
+        # parsed_sets = misc.parse_klv_local_sets(raw_bytes)
 
-        parsers = getattr(UASLocalMetadataSet, "parsers", {}) if UASLocalMetadataSet else {}
-
-        if parsed_sets:
-            for packet in parsed_sets:
-                parsed_metadata = {}
-                for key, value_bytes in packet.items():
-                    try:
-                        parser = parsers.get(key)
-                        if parser:
-                            value = parser(value_bytes).value.value
-                        else:
-                            # default interpretation
-                            value = value_bytes
-                    except Exception:
-                        value = value_bytes
-                    parsed_metadata[int.from_bytes(key, "big")] = value
-
-                if self.dc and self.dc.readyState == "open":
-                    try:
-                        # self.dc.send(json.dumps(parsed_metadata, default=str))
-                        self.loop.call_soon_threadsafe(
-                            self.dc.send, json.dumps(misc.json_safe_serialize(parsed_metadata))
-                        )
-                    except Exception as ex:
-                        print("Failed to send KLV JSON via DataChannel:", ex)
-        else:
-            # If we couldn't parse, send raw bytes base64-encoded
-            import base64
-            payload = {"raw_klv_b64": base64.b64encode(raw_bytes).decode("ascii")}
-            if self.dc and self.dc.readyState == "open":
-                try:
-                    # self.dc.send(json.dumps(payload))
-                    self.loop.call_soon_threadsafe(
-                        self.dc.send, json.dumps(misc.json_safe_serialize(payload))
-                    )
-                except Exception as ex:
-                    print("Failed to send raw KLV via DataChannel:", ex)
+        self.loop.call_soon_threadsafe(
+            self.dc.send, raw_bytes
+        )
 
         buffer.unmap(map_info)
         return Gst.FlowReturn.OK
