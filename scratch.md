@@ -10,3 +10,9 @@ http://localhost:8000/distorted.htm#camera=-71.496924,38.129886,1675039,0.582,-8
 
 ffmpeg -i file.ts -frames:v 1 -q:v 2 file_first.jpg
 
+Needs these
+
+(greenai) E:\AliData\Node\sprint-go\backend>set GST_PLUGIN_PATH=C:\Program Files\gstreamer\1.0\msvc_x86_64\lib\gstreamer-1.0
+
+(greenai) E:\AliData\Node\sprint-go\backend>set GI_TYPELIB_PATH=C:\Program Files\gstreamer\1.0\msvc_x86_64\lib\girepository-1.0
+
