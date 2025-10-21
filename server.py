@@ -337,57 +337,6 @@ def build_pipeline(input_path):
         video_sink = pipeline.get_by_name("video_sink")
         return pipeline, video_sink, None
 
-# ---------------------------
-# Serve HTML (client will receive server offer and answer it)
-# ---------------------------
-INDEX_HTML = """
-<!DOCTYPE html>
-<html>
-<body>
-  <h3>WebRTC Video + KLV Streaming</h3>
-  <video id="video" autoplay playsinline controls width="1000" height="600"></video>
-  <script>
-    async function start() {
-      const videoEl = document.getElementById("video");
-
-      // 1) Request server offer (server will create the offer)
-      const offerResp = await fetch("/offer", { method: "POST" });
-      const offer = await offerResp.json();
-
-      // 2) Create PeerConnection on client and set track handler
-      const pc = new RTCPeerConnection();
-      pc.ontrack = (e) => {
-        videoEl.srcObject = e.streams[0];
-      };
-
-      // Simple handler to log incoming data channel messages
-      pc.ondatachannel = (ev) => {
-        const ch = ev.channel;
-        ch.onmessage = (m) => {
-          console.log("Received KLV/data:", m.data);
-        };
-      };
-
-      // 3) Set remote description (server offer)
-      await pc.setRemoteDescription(offer);
-
-      // 4) create answer and setLocalDescription
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-
-      // 5) send answer back to server
-      await fetch("/answer", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(pc.localDescription)
-      });
-    }
-
-    start();
-  </script>
-</body>
-</html>
-"""
 
 # ---------------------------
 # Aiohttp handlers
@@ -395,7 +344,8 @@ INDEX_HTML = """
 klv_index_to_forward = 0  # default (0-based)
 
 async def index(request):
-    return web.Response(content_type="text/html", text=INDEX_HTML)
+    return web.FileResponse("index.htm")
+
 
 async def offer(request):
     """
