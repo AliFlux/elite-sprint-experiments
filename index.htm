@@ -1,46 +1,178 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <title>Realtime</title>
+    <script src="https://cesium.com/downloads/cesiumjs/releases/1.130.1/Build/Cesium/Cesium.js"></script>
+    <link href="https://cesium.com/downloads/cesiumjs/releases/1.130.1/Build/Cesium/Widgets/widgets.css"
+        rel="stylesheet">
+    <style>
+        html,
+        body,
+        #cesiumContainer {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+        }
+
+        .cesium-viewer-bottom, .cesium-viewer-animationContainer, .cesium-viewer-toolbar, .cesium-viewer-timelineContainer {
+            display: none;
+        }
+
+        #video {
+            display: block;
+            position: absolute;
+            top: 0px;
+            right: 0px;
+            width: 300px;
+            height: 200px;
+        }
+        
+    </style>
+</head>
+
 <body>
-  <h3>WebRTC Video + KLV Streaming</h3>
-  <video id="video" autoplay playsinline controls width="1000" height="600"></video>
-  <script>
-    async function start() {
-      const videoEl = document.getElementById("video");
+    <div id="cesiumContainer"></div>
+    <video id="video" autoplay playsinline controls width="400" height="300"></video>
 
-      // 1) Request server offer (server will create the offer)
-      const offerResp = await fetch("/offer", { method: "POST" });
-      const offer = await offerResp.json();
+    <script src="permalink.js"></script>
+    <script src="decimal.js"></script>
+    <script src="perspective.js"></script>
+    <script src="footprint.js"></script>
+    <script src="metadata.js"></script>
+    <script src="misc.js"></script>
+    <script type="module">
+        Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJlOWMwNjYyMS02MWE0LTRiNmItYTEwMy1kOGQ5OTNkNWQyYWQiLCJpZCI6MTQ1NTAsInNjb3BlcyI6WyJhc3IiLCJnYyJdLCJpYXQiOjE1NjU3ODA0MTl9.jVStXPdk1PpSGewonbPk3V2TXWVmb6Hom_ExapmzavM';
 
-      // 2) Create PeerConnection on client and set track handler
-      const pc = new RTCPeerConnection();
-      pc.ontrack = (e) => {
-        videoEl.srcObject = e.streams[0];
-      };
+        // falls
+        // http://localhost:8080/index.htm#camera=-121.841870,47.542593,311,85.883,-54.543,0.001
 
-      // Simple handler to log incoming data channel messages
-      pc.ondatachannel = (ev) => {
-        const ch = ev.channel;
-        ch.onmessage = (m) => {
-          console.log("Received KLV/data:", m.data);
-        };
-      };
+        // Initialize Cesium Viewer with terrain
+        const viewer = new Cesium.Viewer("cesiumContainer", {
+            terrainProvider: await Cesium.createWorldTerrainAsync(),
+            hash: true,
+            shouldAnimate: true,
+        });
+        window.viewer = viewer;
 
-      // 3) Set remote description (server offer)
-      await pc.setRemoteDescription(offer);
+        if (window.addPermalink) {
+            addPermalink(window, Cesium);
+        }
 
-      // 4) create answer and setLocalDescription
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
+        const videoElement = document.getElementById("video");
+        const metadataList = new Metadata();
+            
+        async function connectWebRTC() {
+            // TODO add auth to this
 
-      // 5) send answer back to server
-      await fetch("/answer", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(pc.localDescription)
-      });
-    }
+            // 1) Request server offer (server will create the offer)
+            const offerResp = await fetch("/offer", { method: "POST" });
+            const offer = await offerResp.json();
 
-    start();
-  </script>
+            // 2) Create PeerConnection on client and set track handler
+            const pc = new RTCPeerConnection();
+            pc.ontrack = (e) => {
+                videoElement.srcObject = e.streams[0];
+            };
+
+            // Simple handler to log incoming data channel messages
+            // TODO add support for KLV, Messagepack, protobuf, JSON, etc.
+            pc.ondatachannel = (ev) => {
+                const ch = ev.channel;
+                ch.onmessage = (m) => {
+                    const packets = JSON.parse(m.data);
+
+                    for (const packet of packets) {
+                        packet["#ts"] = new Date(packet['2']).getTime() / 1000
+                        // console.log(p)
+                        metadataList.push(packet)
+
+                        console.log(packet)
+                    }
+                    // console.log("Received KLV/data:", );
+                    // console.log("Received KLV/data:", m.data);
+                };
+            };
+
+            // 3) Set remote description (server offer)
+            await pc.setRemoteDescription(offer);
+
+            // 4) create answer and setLocalDescription
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+
+            // 5) send answer back to server
+            await fetch("/answer", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(pc.localDescription)
+            });
+        }
+
+        connectWebRTC();
+
+        
+        const footprint = new Footprint({
+            modelUrl: "./raw/models/reaper.glb",
+            // modelUrl: "./raw/models/quadcopter.glb",
+            // modelUrl: "./raw/models/gundrone.glb",
+            videoElement: videoElement,
+                
+            // +X -> back
+            // -X -> front
+            // +Y -> right
+            // -Y -> left
+            // +Z -> down
+            // -Z -> up
+            // sensorRelativePosition: [0, 0, 0],
+            sensorRelativePosition: [-4.7, 0, 1.3],
+        });
+        window.footprint = footprint;
+        await footprint.add(viewer);
+
+
+        let flown = false;
+        const onFrame = (now, videoMetadata) => {
+            // console.log('Video frame time:', videoMetadata.mediaTime);
+
+            
+            const metadata = metadataList.getLDS(videoMetadata.mediaTime);
+            // Update every frame or metadata change
+            footprint.update(metadata);
+
+            videoElement.requestVideoFrameCallback(onFrame);
+
+            if(!flown) {
+                console.log(metadata)
+                // Convert elevation to Cesium's Cartesian3 position
+                const targetPosition = Cesium.Cartesian3.fromDegrees(
+                    metadata["Frame Center Longitude"],
+                    metadata["Frame Center Latitude"],
+                    metadata["Frame Center Elevation"]
+                );
+
+                // Fly the camera to the target location
+                viewer.camera.flyTo({
+                    destination: targetPosition,
+                    orientation: {
+                        heading: Cesium.Math.toRadians(0.0), // facing north
+                        pitch: Cesium.Math.toRadians(-30.0), // look slightly down
+                        roll: 0.0
+                    },
+                    duration: 1
+                });
+                flown = true;
+            }
+
+        }
+
+        videoElement.requestVideoFrameCallback(onFrame);
+
+
+    </script>
 </body>
+
 </html>

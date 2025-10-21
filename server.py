@@ -1,4 +1,3 @@
-# full_script_with_klv.py
 import argparse
 import asyncio
 from fractions import Fraction
@@ -7,6 +6,7 @@ import logging
 import time
 import threading
 import random
+import os
 from aiohttp import web
 from aiortc import MediaStreamError, RTCPeerConnection, RTCSessionDescription, MediaStreamTrack
 from gi.repository import Gst, GLib
@@ -34,11 +34,11 @@ Gst.init(None)
 # -------------------------------------------------------
 # Parameters
 # -------------------------------------------------------
-VIDEO_TS = r"./raw/videos/falls.ts"
+# VIDEO_TS = r"./raw/videos/falls.ts"
 VIDEO_TS = r"./raw/videos/truck.ts"
-VIDEO_TS = "./raw/videos/MISB.ts"
-VIDEO_TS = "./raw/videos/DJI_0872.MP4"
-VIDEO_TS = "./raw/videos/falls.ts"
+# VIDEO_TS = "./raw/videos/MISB.ts"
+# VIDEO_TS = "./raw/videos/DJI_0872.MP4"
+# VIDEO_TS = "./raw/videos/falls.ts"
 
 pcs = set()
 
@@ -110,6 +110,8 @@ class GStreamerVideoTrack(MediaStreamTrack):
 
     async def recv(self):
         """Fetch the next encoded frame from GStreamer (VP8) and wrap it as a Packet."""
+        # TODO save to file
+
         loop = asyncio.get_event_loop()
         sample = await loop.run_in_executor(None, self._pull_sample)
 
@@ -198,6 +200,8 @@ class KLVTrack:
             print("Failed to connect klv sink new-sample:", e)
 
     def on_new_sample(self, sink):
+        # TODO save to file
+        
         sample = sink.emit("pull-sample")
         if not sample:
             return Gst.FlowReturn.OK
@@ -209,10 +213,24 @@ class KLVTrack:
 
         raw_bytes = map_info.data
 
-        # parsed_sets = misc.parse_klv_local_sets(raw_bytes)
+        parsed_sets = misc.parse_klv_local_sets(raw_bytes)
+        parsers = UASLocalMetadataSet.parsers
+
+        parsed_metadatas =[]
+        for packet in parsed_sets:
+            parsed_metadata = {}
+            for key, value_bytes in packet.items():
+                try:
+                    parser = parsers[key]
+                    value = parser(value_bytes).value.value
+                except Exception:
+                    value = value_bytes
+                parsed_metadata[int.from_bytes(key, "big")] = value
+            parsed_metadatas.append(parsed_metadata)
 
         self.loop.call_soon_threadsafe(
-            self.dc.send, raw_bytes
+            # self.dc.send, raw_bytes
+            self.dc.send, json.dumps(misc.json_safe_serialize(parsed_metadatas))
         )
 
         buffer.unmap(map_info)
@@ -408,9 +426,11 @@ if __name__ == "__main__":
 
     app = web.Application()
     app.on_shutdown.append(on_shutdown)
-    app.router.add_get("/", index)
+    # app.router.add_get("/", index)
     app.router.add_post("/offer", offer)
     app.router.add_post("/answer", answer)
+    static_dir = os.getcwd()
+    app.router.add_static("/", static_dir, show_index=True)
 
     print(f"Starting server on {args.host}:{args.port}, video={VIDEO_TS}, klv_index={klv_index_to_forward}")
     web.run_app(app, host=args.host, port=args.port)

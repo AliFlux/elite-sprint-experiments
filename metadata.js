@@ -188,6 +188,26 @@ class Metadata {
   }
 
   /**
+   * Push a new metadata object in realtime.
+   * Assumes obj["#ts"] is strictly greater than the last timestamp.
+   * O(1) append operation.
+   * @param {object} obj
+   */
+  push(obj) {
+    const ts = obj["#ts"];
+    if (typeof ts !== "number") return; // ignore invalid data
+
+    const len = this.timestamps.length;
+    if (len > 0 && ts <= this.timestamps[len - 1]) {
+      // throw new Error(`Timestamp ${ts} must be strictly increasing`);
+      return;
+    }
+
+    this.timestamps.push(ts);
+    this.frames.push(obj);
+  }
+
+  /**
    * Get the closest metadata object to a given timestamp.
    * Uses binary search for O(log n) performance.
    * @param {number} timestamp - Timestamp in seconds
@@ -228,7 +248,8 @@ class Metadata {
   }
 
   getLDS(timestamp) {
-    const frame = this.get(timestamp);
+    // const frame = this.get(timestamp);
+    const frame = this.frames[this.frames.length - 1];
     if (!frame) return null;
 
     const result = {};

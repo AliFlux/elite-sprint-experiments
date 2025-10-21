@@ -364,7 +364,7 @@ class Footprint {
             });
 
             let intersection = scene.globe.pick(ray, scene);
-            intersection = undefined; // TODO dynamically set based on class props
+            // intersection = undefined; // TODO dynamically set based on class props
 
 
             // fallback to ellipsoid intersection if globe.pick fails (e.g. no terrain)
