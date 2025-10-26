@@ -64,6 +64,7 @@
 
         const videoElement = document.getElementById("video");
         const metadataList = new Metadata();
+        let packetDumped = false;
             
         async function connectWebRTC() {
             // TODO add auth to this
@@ -90,7 +91,10 @@
                         // console.log(p)
                         metadataList.push(packet)
 
-                        console.log(packet)
+                        if (!packetDumped) {
+                            console.log("First packet:", packet);
+                            packetDumped = true;
+                        }
                     }
                     // console.log("Received KLV/data:", );
                     // console.log("Received KLV/data:", m.data);
@@ -116,9 +120,9 @@
 
         
         const footprint = new Footprint({
-            modelUrl: "./raw/models/reaper.glb",
-            // modelUrl: "./raw/models/quadcopter.glb",
-            // modelUrl: "./raw/models/gundrone.glb",
+            modelUrl: "./raw/models/reaper/reaper.glb",
+            // modelUrl: "./raw/models/quadcopter/quadcopter.glb",
+            // modelUrl: "./raw/models/gundrone/gundrone.glb",
             videoElement: videoElement,
                 
             // +X -> back
@@ -140,6 +144,11 @@
 
             
             const metadata = metadataList.getLDS(videoMetadata.mediaTime);
+            if(!metadata) {
+                // No metadata for this frame
+                videoElement.requestVideoFrameCallback(onFrame);
+                return;
+            }
             // Update every frame or metadata change
             footprint.update(metadata);
 

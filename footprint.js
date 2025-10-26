@@ -154,8 +154,14 @@ class Footprint {
         this.#canvasA.height = this.#canvasB.height = this.#baseVideo.videoHeight;
         this.#canvasContextA = this.#canvasA.getContext("2d");
         this.#canvasContextB = this.#canvasB.getContext("2d");
-        this.#perspectiveA = new Perspective(this.#canvasContextA, this.#baseVideo);
-        this.#perspectiveB = new Perspective(this.#canvasContextB, this.#baseVideo);
+        this.#perspectiveA = new Perspective(this.#canvasContextA, this.#baseVideo, {
+            "filter": null, // Can be null, "sobel"
+            "background": [0, 0, 0, 0], // RGBA
+        });
+        this.#perspectiveB = new Perspective(this.#canvasContextB, this.#baseVideo, {
+            "filter": null, // Can be null, "sobel"
+            "background": [0, 0, 0, 0], // RGBA
+        });
     }
 
     
@@ -364,7 +370,11 @@ class Footprint {
             });
 
             let intersection = scene.globe.pick(ray, scene);
-            // intersection = undefined; // TODO dynamically set based on class props
+
+            // TODO if use class property "intersectionWith" which can be "terrain" or "ellipsoid"
+            // if its ellipsoid, skip globe.pick and go straight to ellipsoid intersection
+            // if its terrain, do globe.pick first, then fallback to ellipsoid if no intersection
+            intersection = undefined; // TODO dynamically set based on class props
 
 
             // fallback to ellipsoid intersection if globe.pick fails (e.g. no terrain)

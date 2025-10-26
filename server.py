@@ -1,3 +1,4 @@
+# save as webrtc_klv_fixed.py (replace your original)
 import argparse
 import asyncio
 from fractions import Fraction
@@ -34,11 +35,14 @@ Gst.init(None)
 # -------------------------------------------------------
 # Parameters
 # -------------------------------------------------------
+VIDEO_TS = r"./raw/videos/truck.ts"
 # VIDEO_TS = r"./raw/videos/falls.ts"
 VIDEO_TS = r"./raw/videos/truck.ts"
 # VIDEO_TS = "./raw/videos/MISB.ts"
 # VIDEO_TS = "./raw/videos/DJI_0872.MP4"
 # VIDEO_TS = "./raw/videos/falls.ts"
+# VIDEO_TS = "./raw/videos/cheyenne.ts"
+VIDEO_TS = "./raw/videos/klv_metadata_test_sync.ts"
 
 pcs = set()
 
@@ -110,8 +114,6 @@ class GStreamerVideoTrack(MediaStreamTrack):
 
     async def recv(self):
         """Fetch the next encoded frame from GStreamer (VP8) and wrap it as a Packet."""
-        # TODO save to file
-
         loop = asyncio.get_event_loop()
         sample = await loop.run_in_executor(None, self._pull_sample)
 
@@ -158,8 +160,6 @@ class GStreamerVideoTrack(MediaStreamTrack):
 
         # If no new sample — reuse last good one
         self._missed_frames += 1
-        # if self._missed_frames % 30 == 0:
-        #     print(f"⚠️ No new samples for {self._missed_frames} frames.")
 
         if not valid_frame:
             self._current_frame = bytes()
@@ -178,8 +178,6 @@ class GStreamerVideoTrack(MediaStreamTrack):
             print(f"⚠️ Error pulling sample: {e}")
             return None
 
-
-
 # ---------------------------
 # KLV handling: KLVTrack sends parsed KLV metadata to a DataChannel
 # ---------------------------
@@ -193,15 +191,13 @@ class KLVTrack:
 
     def start(self):
         # connect the new-sample handler
-        # use emit-signals=true on sink and connect "new-sample"
         try:
+            # appsink must have "emit-signals"=True
             self.sink.connect("new-sample", self.on_new_sample)
         except Exception as e:
             print("Failed to connect klv sink new-sample:", e)
 
     def on_new_sample(self, sink):
-        # TODO save to file
-        
         sample = sink.emit("pull-sample")
         if not sample:
             return Gst.FlowReturn.OK
@@ -229,7 +225,6 @@ class KLVTrack:
             parsed_metadatas.append(parsed_metadata)
 
         self.loop.call_soon_threadsafe(
-            # self.dc.send, raw_bytes
             self.dc.send, json.dumps(misc.json_safe_serialize(parsed_metadatas))
         )
 
@@ -237,68 +232,136 @@ class KLVTrack:
         return Gst.FlowReturn.OK
 
 # ---------------------------
-# Pad-added handler for tsdemux to discover KLV pads and link to klv_sink
-# ---------------------------
-klv_pad_counter = 0
-klv_found_pads = []  # list of (pad_name, pad_index)
-
-def on_pad_added(demux, pad, pipeline, klv_sink):
-    global klv_pad_counter, klv_found_pads
-    caps = pad.get_current_caps()
-    name = caps.to_string() if caps else "<unknown>"
-    print(f"🔗 New pad discovered: {name}")
-
-    # detect KLV/meta by caps name heuristics
-    if "meta" in name.lower() or "klv" in name.lower() or "application/octet-stream" in name.lower():
-        # create a queue per pad and link to klv_sink
-        pad_index = klv_pad_counter
-        klv_found_pads.append((name, pad_index))
-        print(f"Found KLV candidate pad #{pad_index}: {name}")
-
-        queue = Gst.ElementFactory.make("queue", None)
-        if not queue:
-            print("Failed to create queue element for KLV pad.")
-            return
-
-        pipeline.add(queue)
-        queue.sync_state_with_parent()
-        sinkpad = queue.get_static_pad("sink")
-        res = pad.link(sinkpad)
-        if res != Gst.PadLinkReturn.OK:
-            print("Pad link failed for KLV pad:", res)
-        else:
-            # link queue to klv_sink
-            # note: klv_sink will be in the pipeline already; make sure pad caps match or appsink accepts raw bytes
-            if not queue.link(klv_sink):
-                print("Queue -> klv_sink link possibly failed (caps mismatch?)")
-            else:
-                print(f"✅ Linked KLV pad #{pad_index} into pipeline")
-        klv_pad_counter += 1
-    else:
-        print(f"Skipping non-KLV pad: {name}")
-
-# ---------------------------
-# Build pipeline: two modes
-# - If input file appears to be a .ts, use tsdemux and create a klv_sink
-# - Otherwise, use a single decodebin -> vp8enc -> appsink pipeline for video only
+# Build pipeline: programmatic tsdemux handling (fixed)
 # ---------------------------
 def build_pipeline(input_path):
     is_ts = input_path.lower().endswith(".ts")
     if is_ts:
-        # tsdemux path, exposes demux. pads
-        pipeline_str = f"""
-            filesrc location="{input_path}" !
-            tsdemux name=demux
-            demux. ! queue ! decodebin ! videoconvert ! vp8enc cpu-used=4 deadline=1 threads=4 !
-                queue max-size-buffers=2 max-size-time=0 max-size-bytes=0 ! appsink name=video_sink emit-signals=false max-buffers=20 drop=true sync=true
-            demux. ! queue ! appsink name=klv_sink emit-signals=true max-buffers=20 drop=true sync=false
-        """
-        pipeline = Gst.parse_launch(pipeline_str)
-        video_sink = pipeline.get_by_name("video_sink")
-        klv_sink = pipeline.get_by_name("klv_sink")
-        demux = pipeline.get_by_name("demux")
-        if demux:
-            demux.connect("pad-added", on_pad_added, pipeline, klv_sink)
+        # Build elements programmatically to correctly handle dynamic pads.
+        pipeline = Gst.Pipeline.new("pipeline")
+
+        filesrc = Gst.ElementFactory.make("filesrc", "source")
+        tsdemux = Gst.ElementFactory.make("tsdemux", "demux")
+        # Video chain: queue -> decodebin -> videoconvert -> vp8enc -> queue -> appsink
+        vqueue = Gst.ElementFactory.make("queue", "vqueue")
+        decodebin = Gst.ElementFactory.make("decodebin", "decodebin")
+        videoconvert = Gst.ElementFactory.make("videoconvert", "videoconvert")
+        vp8enc = Gst.ElementFactory.make("vp8enc", "vp8enc")
+        vpostqueue = Gst.ElementFactory.make("queue", "vpostqueue")
+        video_sink = Gst.ElementFactory.make("appsink", "video_sink")
+
+        # KLV chain: queue -> appsink
+        klv_queue = Gst.ElementFactory.make("queue", "klv_queue")
+        klv_sink = Gst.ElementFactory.make("appsink", "klv_sink")
+
+        # basic checks
+        elems = [filesrc, tsdemux, vqueue, decodebin, videoconvert, vp8enc, vpostqueue, video_sink, klv_queue, klv_sink]
+        if any(e is None for e in elems):
+            missing = [name for e,name in zip(elems, ["filesrc","tsdemux","vqueue","decodebin","videoconvert","vp8enc","vpostqueue","video_sink","klv_queue","klv_sink"]) if e is None]
+            raise RuntimeError(f"Missing GStreamer elements: {missing} -- check GStreamer installation and plugins")
+
+        # configure elements
+        filesrc.set_property("location", input_path)
+
+        # video appsink: pull using try-pull-sample in track
+        video_sink.set_property("emit-signals", False)
+        video_sink.set_property("sync", False)
+        video_sink.set_property("max-buffers", 20)
+        video_sink.set_property("drop", True)
+
+        # klv appsink: use signals to call KLVTrack.on_new_sample
+        klv_sink.set_property("emit-signals", True)
+        klv_sink.set_property("sync", False)
+        klv_sink.set_property("max-buffers", 50)
+        klv_sink.set_property("drop", True)
+
+        # add to pipeline
+        pipeline.add(filesrc)
+        pipeline.add(tsdemux)
+        pipeline.add(vqueue)
+        pipeline.add(decodebin)
+        pipeline.add(videoconvert)
+        pipeline.add(vp8enc)
+        pipeline.add(vpostqueue)
+        pipeline.add(video_sink)
+        pipeline.add(klv_queue)
+        pipeline.add(klv_sink)
+
+        # link what can be statically linked:
+        if not filesrc.link(tsdemux):
+            raise RuntimeError("Failed to link filesrc -> tsdemux")
+
+        # link decodebin chain statically: we will connect vqueue -> decodebin dynamically
+        if not videoconvert.link(vp8enc):
+            raise RuntimeError("Failed to link videoconvert -> vp8enc")
+        if not vp8enc.link(vpostqueue):
+            raise RuntimeError("Failed to link vp8enc -> vpostqueue")
+        if not vpostqueue.link(video_sink):
+            raise RuntimeError("Failed to link vpostqueue -> video_sink")
+
+        # queue to klv sink will be linked when KLV pad found
+        if not klv_queue.link(klv_sink):
+            raise RuntimeError("Failed to link klv_queue -> klv_sink")
+
+        # decodebin dynamic pad handler: link decoded video stream into videoconvert chain
+        def on_decodebin_pad(decoder, pad):
+            caps = pad.get_current_caps()
+            if not caps:
+                return
+            caps_str = caps.to_string()
+            # only link video caps
+            if caps_str.lower().startswith("video/"):
+                sinkpad = videoconvert.get_static_pad("sink")
+                if not sinkpad.is_linked():
+                    res = pad.link(sinkpad)
+                    if res != Gst.PadLinkReturn.OK:
+                        print("Failed to link decodebin -> videoconvert:", res)
+                    else:
+                        print("✅ Linked decodebin video pad -> videoconvert")
+            else:
+                # ignore non-video pads (audio, etc)
+                pass
+
+        decodebin.connect("pad-added", on_decodebin_pad)
+
+        # tsdemux pad-added handler:
+        def on_demux_pad(demux, pad):
+            caps = pad.get_current_caps()
+            caps_str = caps.to_string() if caps else "<unknown>"
+            print(f"🔗 demux pad-added: {caps_str}")
+
+            lower = caps_str.lower()
+            # If the pad looks like video (mpeg2video/h264/etc) -> link into vqueue -> decodebin
+            if lower.startswith("video/") or "video" in lower:
+                sinkpad = vqueue.get_static_pad("sink")
+                if not sinkpad.is_linked():
+                    res = pad.link(sinkpad)
+                    if res == Gst.PadLinkReturn.OK:
+                        print("✅ Linked demux -> vqueue (video)")
+                        # now link queue -> decodebin (queue already in pipeline)
+                        if not vqueue.link(decodebin):
+                            # sometimes queue->decodebin is not direct linkable; try to link once decodebin has pads (handled above)
+                            pass
+                    else:
+                        print("Failed to link demux video pad:", res)
+                return
+
+            # Heuristic for KLV / metadata pads:
+            if "klv" in lower or "meta" in lower or "application/octet-stream" in lower or "x-klv" in lower or "meta/x-klv" in lower:
+                sinkpad = klv_queue.get_static_pad("sink")
+                if not sinkpad.is_linked():
+                    res = pad.link(sinkpad)
+                    if res == Gst.PadLinkReturn.OK:
+                        print("✅ Linked demux -> klv_queue (KLV/metadata)")
+                    else:
+                        print("Failed to link demux klv pad:", res)
+                return
+
+            # else: ignore (audio, teletext, etc)
+            print("Skipping demux pad:", caps_str)
+
+        tsdemux.connect("pad-added", on_demux_pad)
+
         return pipeline, video_sink, klv_sink
     else:
         # fallback single-stream video pipeline (your original path)
@@ -313,7 +376,6 @@ def build_pipeline(input_path):
         pipeline = Gst.parse_launch(pipeline_str)
         video_sink = pipeline.get_by_name("video_sink")
         return pipeline, video_sink, None
-
 
 # ---------------------------
 # Aiohttp handlers
