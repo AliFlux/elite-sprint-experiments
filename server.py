@@ -10,10 +10,13 @@ import random
 import os
 from aiohttp import web
 from aiortc import MediaStreamError, RTCPeerConnection, RTCSessionDescription, MediaStreamTrack
-from gi.repository import Gst, GLib
 import numpy as np
 from PIL import Image
 from io import BytesIO
+
+import gi
+gi.require_version('Gst', '1.0')
+from gi.repository import Gst, GLib
 
 import aiortc.codecs
 from aiortc.codecs.h264 import H264Decoder, H264Encoder, h264_depayload

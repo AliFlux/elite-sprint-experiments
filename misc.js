@@ -44,6 +44,64 @@ async function loadVideo(uri) {
     });
 }
 
+function getFitContentPosition(element, clientX, clientY, normalized = false) {
+
+    const rect = element.getBoundingClientRect();
+    const mouseX = clientX - rect.left;
+    const mouseY = clientY - rect.top;
+
+    const videoWidth = element.videoWidth;
+    const videoHeight = element.videoHeight;
+
+    // console.log(rect, clientX, clientY)
+
+    const elementWidth = rect.width;
+    const elementHeight = rect.height;
+
+    // Calculate scaling factors and aspect ratio compensation
+    const videoAspect = videoWidth / videoHeight;
+    const elementAspect = elementWidth / elementHeight;
+
+    let drawWidth, drawHeight, offsetX, offsetY;
+
+    if (elementAspect > videoAspect) {
+        // Letterboxed horizontally (bars on left/right)
+        drawHeight = elementHeight;
+        drawWidth = videoAspect * drawHeight;
+        offsetX = (elementWidth - drawWidth) / 2;
+        offsetY = 0;
+    } else {
+        // Letterboxed vertically (bars on top/bottom)
+        drawWidth = elementWidth;
+        drawHeight = drawWidth / videoAspect;
+        offsetX = 0;
+        offsetY = (elementHeight - drawHeight) / 2;
+    }
+
+    // Check if mouse is within the actual video area
+    const withinVideo =
+        mouseX >= offsetX &&
+        mouseX <= offsetX + drawWidth &&
+        mouseY >= offsetY &&
+        mouseY <= offsetY + drawHeight;
+
+    if (!withinVideo) {
+        // Mouse is over letterbox area
+        return;
+    }
+
+    // Normalize to the actual video content
+    let x = ((mouseX - offsetX) / drawWidth);
+    let y = ((mouseY - offsetY) / drawHeight);
+
+    if(!normalized) {
+        x *= videoWidth;
+        y *= videoHeight;
+    }
+
+    return [x, y];
+}
+
 // Ensure Decimal.js is available
 // const Decimal = require('decimal.js');
 

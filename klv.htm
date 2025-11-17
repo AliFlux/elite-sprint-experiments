@@ -18,7 +18,7 @@
             overflow: hidden;
         }
 
-        .cesium-viewer-bottom, .cesium-viewer-animationContainer, .cesium-viewer-toolbar, .cesium-viewer-timelineContainer {
+        .cesium-viewer-bottom, .cesium-viewer-animationContainer, .cesium-viewer-toolbar, .cesium-viewer-timelineContainer, .cesium-infoBox {
             display: none;
         }
         
@@ -31,6 +31,7 @@
     <script src="permalink.js"></script>
     <script src="decimal.js"></script>
     <script src="perspective.js"></script>
+    <script src="klv.js"></script>
     <script src="footprint.js"></script>
     <script src="metadata.js"></script>
     <script src="misc.js"></script>
@@ -44,6 +45,7 @@
             shouldAnimate: true,
         });
         window.viewer = viewer;
+        viewer.scene.globe.depthTestAgainstTerrain = true;
 
         if (window.addPermalink) {
             addPermalink(window, Cesium);
@@ -227,19 +229,37 @@
         });
 
         const metadataList = new Metadata();
-        await metadataList.load('dam-metadata.txt');
-        const videoElement = await loadVideo("dam.mp4");
+
+        // http://localhost:8000/klv.htm#camera=-80.283638,27.109028,367,328.685,-53.256,0.000
+        await metadataList.load('raw/videos/dam-metadata.txt');
+        const videoElement = await loadVideo("raw/videos/dam.mp4");
+        const startTime = 0;
+
+        // await metadataList.loadKLV('raw/videos/flight_recordings/flight1/telemetry_2e7e5dd5.klv');
+        // const videoElement = await loadVideo("raw/videos/flight_recordings/flight1/recording_8c801e65_2025-10-31_17-25-30-613538.mp4");
+        // const startTime = Date.UTC(2025,10-1,31,17,25,30,613) / 1000;
+        
+        // await metadataList.loadKLV('raw/videos/flight_recordings/flight3/telemetry_cc514233.klv');
+        // const videoElement = await loadVideo("raw/videos/flight_recordings/flight3/recording_788f3d2c_2025-10-31_16-54-59-344858.mp4");
+        // const startTime = Date.UTC(2025,10-1,31,16,54,59,344) / 1000;
+        
+        // await metadataList.loadKLV('raw/videos/flight_recordings/flight4/telemetry_d7468548.klv');
+        // const videoElement = await loadVideo("raw/videos/flight_recordings/flight4/recording_cb0edc5a_2025-10-31_17-28-25-522968.mp4");
+        // const startTime = Date.UTC(2025,10-1,31,17,28,25,522) / 1000;
+
         window.videoElement = videoElement;
 
-        videoElement.currentTime = 135.696348;
-        videoElement.pause();
+        // console.log(metadataList)
+
+        // videoElement.currentTime = 135.696348;
+        // videoElement.pause();
 
 
         // const footprint = new Footprint(videoElement, "./reaper.glb");
         const footprint = new Footprint({
-            modelUrl: "./reaper.glb",
-            // modelUrl: "./quadcopter.glb",
-            // modelUrl: "./gundrone.glb",
+            modelUrl: "./raw/models/reaper/reaper.glb",
+            // modelUrl: "./raw/models/quadcopter/quadcopter.glb",
+            // modelUrl: "./raw/models/gundrone/gundrone.glb",
             videoElement: videoElement,
                 
             // +X -> back
@@ -248,19 +268,22 @@
             // -Y -> left
             // +Z -> down
             // -Z -> up
-            // sensorRelativePosition: [0, 0, 0],
-            sensorRelativePosition: [-4.7, 0, 1.3],
+            // sensorRelativePosition: [0, 0, 0], // quadcopter
+            sensorRelativePosition: [-4.7, 0, 1.3], // reaper
         });
         window.footprint = footprint;
 
         // Add to Cesium viewer (waits for video readiness internally)
         await footprint.add(viewer);
 
+
         const onFrame = (now, videoMetadata) => {
             // console.log('Video frame time:', videoMetadata.mediaTime);
 
+            // console.log(videoMetadata.mediaTime + startTime);
+
             
-            const metadata = metadataList.getLDS(videoMetadata.mediaTime);
+            const metadata = metadataList.getLDS(videoMetadata.mediaTime + startTime);
             // Update every frame or metadata change
             footprint.update(metadata);
 

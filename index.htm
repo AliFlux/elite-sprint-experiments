@@ -27,7 +27,7 @@
             position: absolute;
             top: 0px;
             right: 0px;
-            width: 300px;
+            width: 400px;
             height: 200px;
         }
         
@@ -36,7 +36,7 @@
 
 <body>
     <div id="cesiumContainer"></div>
-    <video id="video" autoplay playsinline controls width="400" height="300"></video>
+    <video id="video" autoplay playsinline controls></video>
 
     <script src="permalink.js"></script>
     <script src="decimal.js"></script>
@@ -55,7 +55,9 @@
             terrainProvider: await Cesium.createWorldTerrainAsync(),
             hash: true,
             shouldAnimate: true,
+            
         });
+        viewer.scene.globe.depthTestAgainstTerrain = true;
         window.viewer = viewer;
 
         if (window.addPermalink) {
@@ -154,27 +156,27 @@
 
             videoElement.requestVideoFrameCallback(onFrame);
 
-            if(!flown) {
-                console.log(metadata)
-                // Convert elevation to Cesium's Cartesian3 position
-                const targetPosition = Cesium.Cartesian3.fromDegrees(
-                    metadata["Frame Center Longitude"],
-                    metadata["Frame Center Latitude"],
-                    metadata["Frame Center Elevation"]
-                );
+            // if(!flown) {
+            //     console.log(metadata)
+            //     // Convert elevation to Cesium's Cartesian3 position
+            //     const targetPosition = Cesium.Cartesian3.fromDegrees(
+            //         metadata["Frame Center Longitude"],
+            //         metadata["Frame Center Latitude"],
+            //         metadata["Frame Center Elevation"]
+            //     );
 
-                // Fly the camera to the target location
-                viewer.camera.flyTo({
-                    destination: targetPosition,
-                    orientation: {
-                        heading: Cesium.Math.toRadians(0.0), // facing north
-                        pitch: Cesium.Math.toRadians(-30.0), // look slightly down
-                        roll: 0.0
-                    },
-                    duration: 1
-                });
-                flown = true;
-            }
+            //     // Fly the camera to the target location
+            //     viewer.camera.flyTo({
+            //         destination: targetPosition,
+            //         orientation: {
+            //             heading: Cesium.Math.toRadians(0.0), // facing north
+            //             pitch: Cesium.Math.toRadians(-30.0), // look slightly down
+            //             roll: 0.0
+            //         },
+            //         duration: 1
+            //     });
+            //     flown = true;
+            // }
 
         }
 

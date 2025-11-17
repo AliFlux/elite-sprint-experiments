@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <title>Realtime</title>
+    <script src="https://cesium.com/downloads/cesiumjs/releases/1.130.1/Build/Cesium/Cesium.js"></script>
+    <link href="https://cesium.com/downloads/cesiumjs/releases/1.130.1/Build/Cesium/Widgets/widgets.css"
+        rel="stylesheet">
+    <style>
+        html,
+        body,
+        #cesiumContainer {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+        }
+
+        .cesium-viewer-bottom, .cesium-viewer-animationContainer, .cesium-viewer-toolbar, .cesium-viewer-timelineContainer {
+            display: none;
+        }
+
+        #video {
+            display: block;
+            position: absolute;
+            top: 0px;
+            right: 0px;
+            width: 400px;
+            height: 200px;
+        }
+
+    </style>
+</head>
+
+<body>
+    <div id="cesiumContainer"></div>
+    <video id="video" autoplay playsinline controls></video>
+
+    <script src="permalink.js"></script>
+    <script src="decimal.js"></script>
+    <script src="perspective.js"></script>
+    <script src="footprint.js"></script>
+    <script src="metadata.js"></script>
+    <script src="misc.js"></script>
+    <script src="mediamtx.js"></script>
+    <script src="socket.io.min.js"></script>
+    <script type="module">
+        Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJlOWMwNjYyMS02MWE0LTRiNmItYTEwMy1kOGQ5OTNkNWQyYWQiLCJpZCI6MTQ1NTAsInNjb3BlcyI6WyJhc3IiLCJnYyJdLCJpYXQiOjE1NjU3ODA0MTl9.jVStXPdk1PpSGewonbPk3V2TXWVmb6Hom_ExapmzavM';
+
+        // Initialize Cesium Viewer with terrain
+        const viewer = new Cesium.Viewer("cesiumContainer", {
+            terrainProvider: await Cesium.createWorldTerrainAsync(),
+            hash: true,
+            shouldAnimate: true,
+
+        });
+        viewer.scene.globe.depthTestAgainstTerrain = true;
+        window.viewer = viewer;
+
+        if (window.addPermalink) {
+            addPermalink(window, Cesium);
+        }
+
+        const videoElement = document.getElementById("video");
+        const metadataList = new Metadata();
+
+
+        const reader = new MediaMTXWebRTCReader({
+            url: "http://192.168.100.28:8889/live/whep",
+
+            onError: (err) => console.error(err),
+
+            onTrack: (evt) => {
+                videoElement.srcObject = evt.streams[0];
+
+                if (reader && reader.pc) {
+                    const pc = reader.pc;
+
+                }
+            },
+        });
+
+
+        const footprint = new Footprint({
+            // modelUrl: "./raw/models/reaper/reaper.glb",
+            modelUrl: "./raw/models/quadcopter/quadcopter.glb",
+            // modelUrl: "./raw/models/gundrone/gundrone.glb",
+            videoElement: videoElement,
+            sensorRelativePosition: [-4.7, 0, 1.3],
+        });
+        window.footprint = footprint;
+        await footprint.add(viewer);
+
+
+        const socket = io('http://192.168.100.28:8999', { path: '/socket.io' });
+
+        socket.on('connect', () => {
+            console.log('✅ Telemetry Socket.IO connected', socket.id);
+        });
+
+        // Listen for telemetry events emitted by the server
+        socket.on('telemetry', (message) => {
+            try {
+
+                const obj = message.data;
+                obj["13"] = 31.388409373084997;
+                obj["14"] = 74.26469549897078;
+                obj["15"] = 200;
+
+
+                obj["#ts"] = new Date(obj['2']).getTime() / 1000
+                // console.log(obj['2'])
+                metadataList.push(obj)
+
+            } catch (e) {
+                console.error('Error handling telemetry event:', e);
+            }
+        });
+
+        socket.on('disconnect', (reason) => {
+            console.log('❌ Telemetry Socket.IO disconnected', reason);
+            // reconnect handled automatically by Socket.IO client
+        });
+
+        socket.on('connect_error', (err) => {
+            console.error('Telemetry Socket.IO connect_error:', err);
+        });
+
+
+        const onFrame = (now, videoMetadata) => {
+            let absoluteMs;
+            if (videoMetadata.captureTime) {
+                absoluteMs = videoMetadata.captureTime;
+            } else {
+                absoluteMs = performance.timeOrigin + videoMetadata.presentationTime * 1000;
+            }
+            // console.log("Frame absolute time:", new Date(absoluteMs).toISOString());
+
+
+            const metadata = metadataList.getLDS(absoluteMs);
+            console.log(metadata)
+            footprint.update(metadata);
+
+            videoElement.requestVideoFrameCallback(onFrame);
+
+        }
+
+        videoElement.requestVideoFrameCallback(onFrame);
+
+
+    </script>
+</body>
+
+</html>

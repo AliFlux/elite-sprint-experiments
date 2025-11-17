@@ -15,17 +15,20 @@ class Footprint {
     #platformEntity = null;
     #polygonEntity = null;
     #offsetEntity = null;
+    #mouseRayEntity = null;
     #rayEntities = [];
 
     // runtime state
     #platformOrientation = null;
 
-    // immutable snapshots used by CallbackProperties (set only in #triggerWarpUpdate)
-    #snapshotSensorPos = null;      // Cesium.Cartesian3
-    #snapshotPlatformPos = null;      // Cesium.Cartesian3
-    #snapshotCorners = null;        // Array<Cesium.Cartesian3>
+    // immutable snapshots
+    #snapshotSensorPos = null;
+    #snapshotPlatformPos = null;
+    #snapshotCorners = null;
 
-    
+    #mousePosition = null;
+    #mouseRayEnd = null;
+
     // public reactive properties
     #showModel;
     #showRays;
@@ -37,7 +40,10 @@ class Footprint {
     #offsetPolygonOpacity;
     #offsetPolygonColor;
     #sensorRelativePosition;
-    
+    #videoFilter;
+    #videoBackground;
+    #intersectionWith;
+
     // ---------- PUBLIC GETTERS/SETTERS ----------
     get showModel() { return this.#showModel; }
     set showModel(v) { this.#showModel = !!v; }
@@ -71,6 +77,28 @@ class Footprint {
     get sensorRelativePosition() { return this.#sensorRelativePosition; }
     set sensorRelativePosition(v) { this.#sensorRelativePosition = v; }
 
+    // new getters/setters
+    get videoFilter() { return this.#videoFilter; }
+    set videoFilter(v) {
+        this.#videoFilter = v === "sobel" ? "sobel" : null;
+        this.#initPerspective();
+        this.#updateWarpedView();
+    }
+
+    get videoBackground() { return this.#videoBackground; }
+    set videoBackground(v) {
+        if (Array.isArray(v) && v.length === 4) this.#videoBackground = v;
+        this.#initPerspective();
+        this.#updateWarpedView();
+    }
+
+    get intersectionWith() { return this.#intersectionWith; }
+    set intersectionWith(v) {
+        this.#intersectionWith = (v === "terrain" || v === "ellipsoid") ? v : "terrain";
+        this.#initPerspective();
+        this.#updateWarpedView();
+    }
+
     constructor(options = {}) {
         const {
             videoElement,
@@ -84,7 +112,10 @@ class Footprint {
             modelOpacity = 1,
             offsetPolygonOpacity = 0.2,
             offsetPolygonColor = [255, 0, 0],
-            sensorRelativePosition = [0, 0, 0]
+            sensorRelativePosition = [0, 0, 0],
+            videoFilter = null,
+            videoBackground = [0, 0, 0, 0],
+            intersectionWith = "terrain"
         } = options;
 
         if (!(videoElement instanceof HTMLVideoElement)) {
@@ -94,7 +125,7 @@ class Footprint {
         this.#opts = { modelUrl };
         this.#baseVideo = videoElement;
         this.#curCanvas = "a";
-        
+
         // assign reactive properties
         this.#showModel = showModel;
         this.#showRays = showRays;
@@ -106,6 +137,29 @@ class Footprint {
         this.#offsetPolygonOpacity = offsetPolygonOpacity;
         this.#offsetPolygonColor = offsetPolygonColor;
         this.#sensorRelativePosition = sensorRelativePosition;
+
+        // new props
+        this.#videoFilter = videoFilter;
+        this.#videoBackground = videoBackground;
+        this.#intersectionWith = intersectionWith;
+
+        this.#baseVideo.onmouseenter = (e) => {
+            
+        };
+
+        this.#baseVideo.onmousemove = (e) => {
+            const position = getFitContentPosition(this.#baseVideo, e.clientX, e.clientY, true);
+            if(!position) {
+                this.#mouseRayEnd = null;
+                return;
+            }
+            this.#mousePosition = position;
+            this.#computeMouseRay();
+        };
+
+        this.#baseVideo.onmouseleave = (e) => {
+            this.#mouseRayEnd = null;
+        };
 
         if (this.#baseVideo.readyState >= 1) {
             this.#initOffscreenFromVideo();
@@ -135,8 +189,7 @@ class Footprint {
         ents.forEach(e => e && this.#viewer.entities.remove(e));
         this.#rayEntities.forEach(e => this.#viewer.entities.remove(e));
         this.#rayEntities = [];
-        this.#platformEntity = this.#polygonEntity = this.#offsetEntity = null;
-        // clear snapshots
+        this.#platformEntity = this.#polygonEntity = this.#offsetEntity = this.#mouseRayEntity = null;
         this.#snapshotSensorPos = null;
         this.#snapshotPlatformPos = null;
         this.#snapshotCorners = null;
@@ -154,16 +207,19 @@ class Footprint {
         this.#canvasA.height = this.#canvasB.height = this.#baseVideo.videoHeight;
         this.#canvasContextA = this.#canvasA.getContext("2d");
         this.#canvasContextB = this.#canvasB.getContext("2d");
-        this.#perspectiveA = new Perspective(this.#canvasContextA, this.#baseVideo, {
-            "filter": null, // Can be null, "sobel"
-            "background": [0, 0, 0, 0], // RGBA
-        });
-        this.#perspectiveB = new Perspective(this.#canvasContextB, this.#baseVideo, {
-            "filter": null, // Can be null, "sobel"
-            "background": [0, 0, 0, 0], // RGBA
-        });
+        this.#initPerspective();
     }
 
+    #initPerspective() {
+        this.#perspectiveA = new Perspective(this.#canvasContextA, this.#baseVideo, {
+            filter: this.#videoFilter,
+            background: this.#videoBackground,
+        });
+        this.#perspectiveB = new Perspective(this.#canvasContextB, this.#baseVideo, {
+            filter: this.#videoFilter,
+            background: this.#videoBackground,
+        });
+    }
     
     #createEntities() {
         // UAV model (optional)
@@ -205,6 +261,23 @@ class Footprint {
                 this.#rayEntities.push(rayEntity);
             })(i);
         }
+
+        this.#mouseRayEntity = this.#viewer.entities.add({
+            polyline: {
+                show: new Cesium.CallbackProperty(() => this.#showRays, false),
+                positions: new Cesium.CallbackProperty(() => {
+                    if (!this.#mouseRayEnd) return undefined;
+                    const start = this.#snapshotSensorPos.clone();
+                    const end = this.#mouseRayEnd.clone();
+                    return [start, end];
+                }, false),
+                width: 1,
+                material: new Cesium.PolylineGlowMaterialProperty({
+                    color: Cesium.Color.TOMATO,
+                    glowPower: 2
+                })
+            }
+        });
 
         const self = this;
 
@@ -328,6 +401,8 @@ class Footprint {
         return multiplyMatrix3ByVector(rotationMatrix, vec, new Cesium.Cartesian3());
     }
 
+
+    // unchanged except intersection logic
     #computeCornerIntersections(metadata, sensorPos, platformOrientation) {
         const sensorAzimuth = toRad(toDecimal(metadata["Sensor Relative Azimuth Angle"]) ?? 0);
         const sensorElevation = toRad(toDecimal(metadata["Sensor Relative Elevation Angle"]) ?? 0);
@@ -340,10 +415,10 @@ class Footprint {
         const halfVFov = toDecimal(vFov).div(2);
 
         const cornersLocal = [
-            new Cesium.Cartesian3(1, Decimal.tan(halfHFov).toNumber(),  Decimal.tan(halfVFov).toNumber()),  // top-left
-            new Cesium.Cartesian3(1, Decimal.tan(-halfHFov).toNumber(), Decimal.tan(halfVFov).toNumber()),  // top-right
-            new Cesium.Cartesian3(1, Decimal.tan(-halfHFov).toNumber(), Decimal.tan(-halfVFov).toNumber()), // bottom-right
-            new Cesium.Cartesian3(1, Decimal.tan(halfHFov).toNumber(),  Decimal.tan(-halfVFov).toNumber())  // bottom-left
+            new Cesium.Cartesian3(1, Decimal.tan(halfHFov).toNumber(),  Decimal.tan(halfVFov).toNumber()),
+            new Cesium.Cartesian3(1, Decimal.tan(-halfHFov).toNumber(), Decimal.tan(halfVFov).toNumber()),
+            new Cesium.Cartesian3(1, Decimal.tan(-halfHFov).toNumber(), Decimal.tan(-halfVFov).toNumber()),
+            new Cesium.Cartesian3(1, Decimal.tan(halfHFov).toNumber(),  Decimal.tan(-halfVFov).toNumber())
         ];
 
         const scene = this.#viewer.scene;
@@ -357,11 +432,7 @@ class Footprint {
             );
 
             const rotMat = matrix3fromHeadingPitchRoll(cornerHpr);
-            let forwardLocal = multiplyMatrix3ByVector(
-                rotMat,
-                cornersLocal[i],
-                new Cesium.Cartesian3()
-            );
+            let forwardLocal = multiplyMatrix3ByVector(rotMat, cornersLocal[i], new Cesium.Cartesian3());
             const forwardWorld = this.#rotateVectorByQuaternion(forwardLocal, platformOrientation);
             const ray = new Cesium.Ray(sensorPos, {
                 x: forwardWorld.x.toNumber(),
@@ -369,24 +440,25 @@ class Footprint {
                 z: forwardWorld.z.toNumber()
             });
 
-            let intersection = scene.globe.pick(ray, scene);
+            let intersection;
 
-            // TODO if use class property "intersectionWith" which can be "terrain" or "ellipsoid"
-            // if its ellipsoid, skip globe.pick and go straight to ellipsoid intersection
-            // if its terrain, do globe.pick first, then fallback to ellipsoid if no intersection
-            intersection = undefined; // TODO dynamically set based on class props
-
-
-            // fallback to ellipsoid intersection if globe.pick fails (e.g. no terrain)
-            if(!intersection) {
+            // NEW LOGIC for intersectionWith
+            if (this.#intersectionWith === "ellipsoid") {
                 const ellipsoid = scene.globe.ellipsoid;
-                const intersectionResult = Cesium.IntersectionTests.rayEllipsoid(ray, ellipsoid);
-
-                if (Cesium.defined(intersectionResult)) {
-                    // intersectionResult.start is the scalar distance along the ray
-                    const t = intersectionResult.start;
-                    if (isFinite(t) && t > 0) {
-                        intersection = Cesium.Ray.getPoint(ray, t);
+                const res = Cesium.IntersectionTests.rayEllipsoid(ray, ellipsoid);
+                if (Cesium.defined(res)) {
+                    const t = res.start;
+                    if (isFinite(t) && t > 0) intersection = Cesium.Ray.getPoint(ray, t);
+                }
+            } else {
+                // terrain first
+                intersection = scene.globe.pick(ray, scene);
+                if (!intersection) {
+                    const ellipsoid = scene.globe.ellipsoid;
+                    const res = Cesium.IntersectionTests.rayEllipsoid(ray, ellipsoid);
+                    if (Cesium.defined(res)) {
+                        const t = res.start;
+                        if (isFinite(t) && t > 0) intersection = Cesium.Ray.getPoint(ray, t);
                     }
                 }
             }
@@ -396,25 +468,79 @@ class Footprint {
             } else {
                 cornerIntersections = [];
                 break;
-                // return [null, null];
             }
         }
 
-        
         const rotMatrix = Cesium.Matrix3.fromQuaternion(platformOrientation);
-
-        // +X -> back
-        // -X -> front
-        // +Y -> right
-        // -Y -> left
-        // +Z -> down
-        // -Z -> up
         const localForward = new Cesium.Cartesian3(this.#sensorRelativePosition[0], this.#sensorRelativePosition[1], this.#sensorRelativePosition[2]);
         const worldForward = Cesium.Matrix3.multiplyByVector(rotMatrix, localForward, new Cesium.Cartesian3());
         const platformPosition = Cesium.Cartesian3.add(sensorPos, worldForward, new Cesium.Cartesian3());
 
-
         return [cornerIntersections, platformPosition];
+    }
+
+    #computeMouseRay() {
+        if (!this.#mousePosition || !this.#viewer || !this.#snapshotSensorPos) {
+            return;
+        }
+
+        const scene = this.#viewer.scene;
+        const metadata = this.#metadata; // assumes same structure used in computeCornerIntersections
+        const platformOrientation = this.#platformOrientation;
+
+        // Retrieve and convert sensor orientation angles
+        const sensorAzimuth = toRad(toDecimal(metadata["Sensor Relative Azimuth Angle"]) ?? 0);
+        const sensorElevation = toRad(toDecimal(metadata["Sensor Relative Elevation Angle"]) ?? 0);
+        const sensorRoll = toRad(toDecimal(metadata["Sensor Relative Roll Angle"]) ?? 0);
+
+        // Retrieve field of view
+        const hFov = toRad((toDecimal(metadata["Sensor Horizontal Field of View"] ?? metadata["Sensor Horizontal FOV"])) ?? 0);
+        const vFov = toRad((toDecimal(metadata["Sensor Vertical Field of View"] ?? metadata["Sensor Vertical FOV"])) ?? 0);
+
+        const halfHFov = toDecimal(hFov).div(2);
+        const halfVFov = toDecimal(vFov).div(2);
+
+        // const nx = 1 - this.#mousePosition[0] * 2; 
+        // const ny = 1 - this.#mousePosition[1] * 2;
+
+        const nx = 1 - this.#mousePosition[0] * 2; 
+        const ny = 1 - this.#mousePosition[1] * 2;
+
+        // Compute tangent of offset angles (same basis as cornersLocal)
+        const localDir = new Cesium.Cartesian3(
+            1,
+            Decimal.tan(nx * halfHFov).toNumber(),
+            Decimal.tan(ny * halfVFov).toNumber()
+        );
+
+        // Apply sensor orientation
+        const cornerHpr = new HeadingPitchRoll(
+            toDecimal(sensorAzimuth),
+            toDecimal(sensorElevation),
+            toDecimal(sensorRoll)
+        );
+        const rotMat = matrix3fromHeadingPitchRoll(cornerHpr);
+        let forwardLocal = multiplyMatrix3ByVector(rotMat, localDir, new Cesium.Cartesian3());
+
+        // Rotate by platform orientation
+        const forwardWorld = this.#rotateVectorByQuaternion(forwardLocal, platformOrientation);
+
+        // Build the ray
+        const ray = new Cesium.Ray(this.#snapshotSensorPos, {
+            x: forwardWorld.x,
+            y: forwardWorld.y,
+            z: forwardWorld.z
+        });
+
+        // Compute ray end point 20,000 m ahead
+        const distance = 20000.0;
+        const rayEnd = Cesium.Cartesian3.add(
+            ray.origin,
+            Cesium.Cartesian3.multiplyByScalar(ray.direction, distance, new Cesium.Cartesian3()),
+            new Cesium.Cartesian3()
+        );
+
+        this.#mouseRayEnd = rayEnd;
     }
 
     #warpImageToPolygon(activeCanvas, cornerIntersections) {
@@ -442,4 +568,5 @@ class Footprint {
             this.#perspectiveB.draw(dstRaw);
         }
     }
+
 }

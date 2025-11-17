@@ -187,6 +187,28 @@ class Metadata {
     this.frames = combined.map(x => x[1]);
   }
 
+  async loadKLV(klvUrl) {
+    const response = await fetch(klvUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to load metadata file: ${response.status} ${response.statusText}`);
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    const klvValues = await parseKLV(arrayBuffer);
+
+    this.frames = [];
+    this.timestamps = [];
+
+    for(const klvValue of klvValues) {
+      const obj = parseKLVPacket(klvValue);
+      let ts = new Date(obj["2"]);
+      obj["#ts"] = ts.getTime() / 1000;
+      this.frames.push(obj);
+      this.timestamps.push(obj["#ts"]);
+    }
+
+  }
+
   /**
    * Push a new metadata object in realtime.
    * Assumes obj["#ts"] is strictly greater than the last timestamp.
@@ -248,8 +270,8 @@ class Metadata {
   }
 
   getLDS(timestamp) {
-    // const frame = this.get(timestamp);
-    const frame = this.frames[this.frames.length - 1];
+    const frame = this.get(timestamp);
+    // const frame = this.frames[this.frames.length - 1];
     if (!frame) return null;
 
     const result = {};
