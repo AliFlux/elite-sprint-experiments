@@ -30,7 +30,7 @@
 
     <script src="permalink.js"></script>
     <script src="decimal.js"></script>
-    <script src="perspective.js"></script>
+    <script src="perspective-mesh.js"></script>
     <script src="klv.js"></script>
     <script src="footprint.js"></script>
     <script src="metadata.js"></script>
@@ -233,6 +233,16 @@
         // http://localhost:8000/klv.htm#camera=-80.283638,27.109028,367,328.685,-53.256,0.000
         await metadataList.load('raw/videos/dam-metadata.txt');
         const videoElement = await loadVideo("raw/videos/dam.mp4");
+        // await metadataList.load('raw/videos/Video_Clip_2/metadata.jsonl');
+        // const videoElement = await loadVideo("raw/videos/Video_Clip_2/video.mp4");
+        // await metadataList.load('raw/videos/Cheyenne_Handoff/metadata.jsonl');
+        // const videoElement = await loadVideo("raw/videos/Cheyenne_Handoff/video.mp4");
+        // await metadataList.load('raw/videos/ArcVideo/metadata.jsonl');
+        // const videoElement = await loadVideo("raw/videos/ArcVideo/video.mp4");
+        // await metadataList.load('raw/videos/Herzelia2/metadata.jsonl');
+        // const videoElement = await loadVideo("raw/videos/Herzelia2/video.mp4");
+        // await metadataList.load('raw/videos/DV3_140612Z/metadata.jsonl');
+        // const videoElement = await loadVideo("raw/videos/DV3_140612Z/video.mp4");
         const startTime = 0;
 
         // await metadataList.loadKLV('raw/videos/flight_recordings/flight1/telemetry_2e7e5dd5.klv');
@@ -271,6 +281,7 @@
             // sensorRelativePosition: [0, 0, 0], // quadcopter
             sensorRelativePosition: [-4.7, 0, 1.3], // reaper
         });
+        footprint.intersectionWith = 'ellipsoid'
         window.footprint = footprint;
 
         // Add to Cesium viewer (waits for video readiness internally)

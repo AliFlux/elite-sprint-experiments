@@ -18,6 +18,7 @@
             overflow: hidden;
         }
     </style>
+    <script src="decimal.js"></script>
 </head>
 
 <body>
@@ -25,12 +26,13 @@
 
     <script src="permalink.js"></script>
     <script src="misc.js"></script>
-    <script src="perspective.js"></script>
+    <script src="perspective-mesh.js"></script>
     <script src="distorted-canvas.js"></script>
+
     <script type="module">
         Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJlOWMwNjYyMS02MWE0LTRiNmItYTEwMy1kOGQ5OTNkNWQyYWQiLCJpZCI6MTQ1NTAsInNjb3BlcyI6WyJhc3IiLCJnYyJdLCJpYXQiOjE1NjU3ODA0MTl9.jVStXPdk1PpSGewonbPk3V2TXWVmb6Hom_ExapmzavM';
 
-        // http://localhost:8000/distorted.htm#camera=-68.902453,35.859453,1723708,313.473,-81.972,359.824
+        // // http://localhost:8000/distorted.htm#camera=-68.902453,35.859453,1723708,313.473,-81.972,359.824
         
         // Initialize Cesium Viewer with terrain
         const viewer = new Cesium.Viewer("cesiumContainer", {

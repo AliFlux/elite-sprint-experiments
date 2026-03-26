@@ -24,10 +24,14 @@ class Footprint {
     // immutable snapshots
     #snapshotSensorPos = null;
     #snapshotPlatformPos = null;
-    #snapshotCorners = null;
+    #snapshotGrid = null;       // 4×4 grid of Cartesian3, row-major
+    #snapshotCorners = null;    // just the 4 outer corners (for polygon outline + rays)
 
     #mousePosition = null;
     #mouseRayEnd = null;
+
+    // grid dimension
+    static #GRID_N = 4;
 
     // public reactive properties
     #showModel;
@@ -77,7 +81,6 @@ class Footprint {
     get sensorRelativePosition() { return this.#sensorRelativePosition; }
     set sensorRelativePosition(v) { this.#sensorRelativePosition = v; }
 
-    // new getters/setters
     get videoFilter() { return this.#videoFilter; }
     set videoFilter(v) {
         this.#videoFilter = v === "sobel" ? "sobel" : null;
@@ -126,7 +129,6 @@ class Footprint {
         this.#baseVideo = videoElement;
         this.#curCanvas = "a";
 
-        // assign reactive properties
         this.#showModel = showModel;
         this.#showRays = showRays;
         this.#showOffsetPolygon = showOffsetPolygon;
@@ -137,19 +139,15 @@ class Footprint {
         this.#offsetPolygonOpacity = offsetPolygonOpacity;
         this.#offsetPolygonColor = offsetPolygonColor;
         this.#sensorRelativePosition = sensorRelativePosition;
-
-        // new props
         this.#videoFilter = videoFilter;
         this.#videoBackground = videoBackground;
         this.#intersectionWith = intersectionWith;
 
-        this.#baseVideo.onmouseenter = (e) => {
-            
-        };
+        this.#baseVideo.onmouseenter = (e) => {};
 
         this.#baseVideo.onmousemove = (e) => {
             const position = getFitContentPosition(this.#baseVideo, e.clientX, e.clientY, true);
-            if(!position) {
+            if (!position) {
                 this.#mouseRayEnd = null;
                 return;
             }
@@ -192,6 +190,7 @@ class Footprint {
         this.#platformEntity = this.#polygonEntity = this.#offsetEntity = this.#mouseRayEntity = null;
         this.#snapshotSensorPos = null;
         this.#snapshotPlatformPos = null;
+        this.#snapshotGrid = null;
         this.#snapshotCorners = null;
     }
 
@@ -211,20 +210,22 @@ class Footprint {
     }
 
     #initPerspective() {
-        this.#perspectiveA = new Perspective(this.#canvasContextA, this.#baseVideo, {
+        const N = Footprint.#GRID_N;
+        this.#perspectiveA = new Perspective(this.#canvasContextA, this.#baseVideo, N, {
             filter: this.#videoFilter,
             background: this.#videoBackground,
         });
-        this.#perspectiveB = new Perspective(this.#canvasContextB, this.#baseVideo, {
+        this.#perspectiveB = new Perspective(this.#canvasContextB, this.#baseVideo, N, {
             filter: this.#videoFilter,
             background: this.#videoBackground,
         });
     }
-    
+
     #createEntities() {
         // UAV model (optional)
         this.#platformEntity = this.#viewer.entities.add({
-            position: new Cesium.CallbackProperty(() => this.#snapshotPlatformPos ? this.#snapshotPlatformPos.clone() : undefined, false),
+            position: new Cesium.CallbackProperty(() =>
+                this.#snapshotPlatformPos ? this.#snapshotPlatformPos.clone() : undefined, false),
             orientation: new Cesium.CallbackProperty(() => this.#platformOrientation, false),
             model: {
                 show: new Cesium.CallbackProperty(() => this.#showModel, false),
@@ -233,33 +234,39 @@ class Footprint {
                 color: new Cesium.CallbackProperty(() => Cesium.Color.WHITE.withAlpha(this.#modelOpacity), false),
                 colorBlendMode: Cesium.ColorBlendMode.MIX,
                 colorBlendAmount: 0.15,
-                runAnimations: new Cesium.CallbackProperty(() => {
-                    return this.#baseVideo && !this.#baseVideo.paused && !this.#baseVideo.ended;
-                }, false),
+                runAnimations: new Cesium.CallbackProperty(() =>
+                    this.#baseVideo && !this.#baseVideo.paused && !this.#baseVideo.ended, false),
             }
         });
 
-        // Rays (4 lines)
+        // 4 corner rays only (indices into the 4×4 grid: TL, TR, BR, BL)
+        const N = Footprint.#GRID_N;
+        const cornerIndices = [
+            0,              // TL: row 0, col 0
+            N - 1,          // TR: row 0, col N-1
+            N * N - 1,      // BR: row N-1, col N-1
+            N * (N - 1),    // BL: row N-1, col 0
+        ];
+
         for (let i = 0; i < 4; i++) {
-            ((idx) => {
-                const rayEntity = this.#viewer.entities.add({
-                    polyline: {
-                        show: new Cesium.CallbackProperty(() => this.#showRays, false),
-                        positions: new Cesium.CallbackProperty(() => {
-                            if (!this.#snapshotSensorPos || !this.#snapshotCorners) return undefined;
-                            const start = this.#snapshotSensorPos.clone();
-                            const end = (this.#snapshotCorners[idx] && this.#snapshotCorners[idx].clone()) || start.clone();
-                            return [start, end];
-                        }, false),
-                        width: 2,
-                        material: new Cesium.PolylineGlowMaterialProperty({
-                            color: Cesium.Color.CYAN,
-                            glowPower: 0.3
-                        })
-                    }
-                });
-                this.#rayEntities.push(rayEntity);
-            })(i);
+            const gridIdx = cornerIndices[i];
+            const rayEntity = this.#viewer.entities.add({
+                polyline: {
+                    show: new Cesium.CallbackProperty(() => this.#showRays, false),
+                    positions: new Cesium.CallbackProperty(() => {
+                        if (!this.#snapshotSensorPos || !this.#snapshotGrid) return undefined;
+                        const start = this.#snapshotSensorPos.clone();
+                        const end = this.#snapshotGrid[gridIdx]?.clone() ?? start.clone();
+                        return [start, end];
+                    }, false),
+                    width: 2,
+                    material: new Cesium.PolylineGlowMaterialProperty({
+                        color: Cesium.Color.CYAN,
+                        glowPower: 0.3
+                    })
+                }
+            });
+            this.#rayEntities.push(rayEntity);
         }
 
         this.#mouseRayEntity = this.#viewer.entities.add({
@@ -267,9 +274,7 @@ class Footprint {
                 show: new Cesium.CallbackProperty(() => this.#showRays, false),
                 positions: new Cesium.CallbackProperty(() => {
                     if (!this.#mouseRayEnd) return undefined;
-                    const start = this.#snapshotSensorPos.clone();
-                    const end = this.#mouseRayEnd.clone();
-                    return [start, end];
+                    return [this.#snapshotSensorPos.clone(), this.#mouseRayEnd.clone()];
                 }, false),
                 width: 1,
                 material: new Cesium.PolylineGlowMaterialProperty({
@@ -279,31 +284,30 @@ class Footprint {
             }
         });
 
-        const self = this;
-
-        // Main warped video polygon
+        // Main warped video polygon — hierarchy uses only the 4 outer corners
         this.#polygonEntity = this.#viewer.entities.add({
             polygon: {
                 show: new Cesium.CallbackProperty(() => this.#showVideoOverlay, false),
                 hierarchy: new Cesium.CallbackProperty(() => {
                     if (!this.#snapshotCorners) return undefined;
-                    const cloned = this.#snapshotCorners.map(c => c.clone());
-                    return new Cesium.PolygonHierarchy(cloned);
+                    return new Cesium.PolygonHierarchy(
+                        this.#snapshotCorners.map(c => c.clone())
+                    );
                 }, false),
                 material: new Cesium.ImageMaterialProperty({
                     image: new Cesium.CallbackProperty(() => {
-                        const activeCanvas = self.#curCanvas === "a" ? self.#canvasA : self.#canvasB;
-                        return activeCanvas;
+                        return this.#curCanvas === "a" ? this.#canvasA : this.#canvasB;
                     }, false),
                     transparent: true,
-                    color: new Cesium.CallbackProperty(() => Cesium.Color.WHITE.withAlpha(this.#videoOverlayOpacity), false)
+                    color: new Cesium.CallbackProperty(() =>
+                        Cesium.Color.WHITE.withAlpha(this.#videoOverlayOpacity), false)
                 }),
                 classificationType: Cesium.ClassificationType.TERRAIN,
                 clampToGround: true
             }
         });
 
-        // Offset polygon
+        // Offset polygon (unchanged)
         this.#offsetEntity = this.#viewer.entities.add({
             polygon: {
                 show: new Cesium.CallbackProperty(() => this.#showOffsetPolygon, false),
@@ -316,23 +320,27 @@ class Footprint {
                         const offsetLat = Number(this.#metadata[`Offset Corner Latitude Point ${i}`] ?? 0);
                         const offsetLon = Number(this.#metadata[`Offset Corner Longitude Point ${i}`] ?? 0);
                         offsetCorners.push(
-                            Cesium.Cartesian3.fromDegrees(frameCenterLon + offsetLon, frameCenterLat + offsetLat, 0)
+                            Cesium.Cartesian3.fromDegrees(
+                                frameCenterLon + offsetLon,
+                                frameCenterLat + offsetLat,
+                                0
+                            )
                         );
                     }
-                    return offsetCorners.length === 4 ? new Cesium.PolygonHierarchy(offsetCorners) : undefined;
+                    return offsetCorners.length === 4
+                        ? new Cesium.PolygonHierarchy(offsetCorners)
+                        : undefined;
                 }, false),
-                material: new Cesium.ColorMaterialProperty(new Cesium.CallbackProperty(() => {
-                        return Cesium.Color.fromBytes(
+                material: new Cesium.ColorMaterialProperty(
+                    new Cesium.CallbackProperty(() =>
+                        Cesium.Color.fromBytes(
                             this.#offsetPolygonColor[0],
                             this.#offsetPolygonColor[1],
                             this.#offsetPolygonColor[2]
-                        ).withAlpha(this.#offsetPolygonOpacity);
-                    }, false),
+                        ).withAlpha(this.#offsetPolygonOpacity), false)
                 ),
             }
         });
-
-        return;
     }
 
     // -----------------------------
@@ -341,29 +349,37 @@ class Footprint {
     #triggerWarpUpdate() {
         if (!this.#metadata) return;
 
-        // preserve your math exactly
         const sensorPos = this.#computeSensorPosition(this.#metadata);
         const platformOrientation = this.#computePlatformOrientation(this.#metadata, sensorPos);
-        const [cornerIntersections, platformPosition] = this.#computeCornerIntersections(this.#metadata, sensorPos, platformOrientation);
+        const [grid, platformPosition] = this.#computeGridIntersections(
+            this.#metadata, sensorPos, platformOrientation
+        );
 
         this.#platformOrientation = platformOrientation;
 
-        if (cornerIntersections && cornerIntersections.length === 4) {
-            // store the live lastCorners for internal use
+        const N = Footprint.#GRID_N;
+        const expectedCount = N * N;
 
-            // create immutable snapshots that CallbackProperties will read until next update
-            // clone deeply so Cesium won't see mutations; freeze array to be extra-safe
-            const snapped = cornerIntersections.map(c => c.clone());
-            Object.freeze(snapped);
-            this.#snapshotCorners = snapped;
+        if (grid && grid.length === expectedCount) {
+            const snappedGrid = grid.map(c => c.clone());
+            Object.freeze(snappedGrid);
+            this.#snapshotGrid = snappedGrid;
 
-            // snapshot sensor position (clone)
-            this.#snapshotSensorPos = sensorPos ? sensorPos.clone() : null;
-            this.#snapshotPlatformPos = platformPosition ? platformPosition.clone() : null;
+            // Extract the 4 outer corners for the polygon outline
+            // TL, TR, BR, BL in order expected by Cesium PolygonHierarchy
+            this.#snapshotCorners = Object.freeze([
+                snappedGrid[0],               // TL
+                snappedGrid[N - 1],           // TR
+                snappedGrid[N * N - 1],       // BR
+                snappedGrid[N * (N - 1)],     // BL
+            ]);
 
-            // update view / warping as before
+            this.#snapshotSensorPos = sensorPos?.clone() ?? null;
+            this.#snapshotPlatformPos = platformPosition?.clone() ?? null;
+
             this.#updateWarpedView();
         } else {
+            this.#snapshotGrid = null;
             this.#snapshotCorners = null;
             this.#updateWarpedView();
         }
@@ -372,10 +388,134 @@ class Footprint {
     #updateWarpedView() {
         this.#curCanvas = this.#curCanvas === "a" ? "b" : "a";
         const activeCanvas = this.#curCanvas === "a" ? this.#canvasA : this.#canvasB;
-        this.#warpImageToPolygon(activeCanvas, this.#snapshotCorners);
+        this.#warpImageToPolygon(activeCanvas, this.#snapshotGrid);
     }
 
-    // everything below is *untouched math logic*
+    // -----------------------------
+    // GRID RAY CASTING
+    // -----------------------------
+
+    // Replaces #computeCornerIntersections.
+    // Shoots N×N rays through a regular grid of pixel positions across the FOV,
+    // returns [grid, platformPosition] where grid is N*N Cartesian3 row-major.
+    #computeGridIntersections(metadata, sensorPos, platformOrientation) {
+        const N = Footprint.#GRID_N;
+
+        const sensorAzimuth   = toRad(toDecimal(metadata["Sensor Relative Azimuth Angle"])   ?? 0);
+        const sensorElevation = toRad(toDecimal(metadata["Sensor Relative Elevation Angle"]) ?? 0);
+        const sensorRoll      = toRad(toDecimal(metadata["Sensor Relative Roll Angle"])      ?? 0);
+
+        const hFov = toRad((toDecimal(metadata["Sensor Horizontal Field of View"] ?? metadata["Sensor Horizontal FOV"])) ?? 0);
+        const vFov = toRad((toDecimal(metadata["Sensor Vertical Field of View"]   ?? metadata["Sensor Vertical FOV"]))   ?? 0);
+
+        const halfHFov = toDecimal(hFov).div(2);
+        const halfVFov = toDecimal(vFov).div(2);
+
+        const scene = this.#viewer.scene;
+        const cornerHpr = new HeadingPitchRoll(
+            toDecimal(sensorAzimuth),
+            toDecimal(sensorElevation),
+            toDecimal(sensorRoll)
+        );
+        const rotMat = matrix3fromHeadingPitchRoll(cornerHpr);
+
+        const grid = [];
+
+        for (let row = 0; row < N; row++) {
+            for (let col = 0; col < N; col++) {
+                // Normalised pixel position: row 0 = top (positive vFov),
+                // col 0 = left (negative hFov)
+                // t=0 → -half, t=1 → +half
+                const s = col / (N - 1);  // 0→1 left→right
+                const t = row / (N - 1);  // 0→1 top→bottom
+                
+                const tanH = Decimal.tan(halfHFov.mul(1 - 2 * s)).toNumber(); // was: 2*s - 1
+                const tanV = Decimal.tan(halfVFov.mul(1 - 2 * t)).toNumber(); // flip: top = positive
+
+                const localDir = new Cesium.Cartesian3(1, tanH, tanV);
+                const forwardLocal = multiplyMatrix3ByVector(rotMat, localDir, new Cesium.Cartesian3());
+                const forwardWorld = this.#rotateVectorByQuaternion(forwardLocal, platformOrientation);
+
+                const ray = new Cesium.Ray(sensorPos, {
+                    x: forwardWorld.x.toNumber(),
+                    y: forwardWorld.y.toNumber(),
+                    z: forwardWorld.z.toNumber()
+                });
+
+                let intersection;
+
+                if (this.#intersectionWith === "ellipsoid") {
+                    const res = Cesium.IntersectionTests.rayEllipsoid(ray, scene.globe.ellipsoid);
+                    if (Cesium.defined(res) && isFinite(res.start) && res.start > 0)
+                        intersection = Cesium.Ray.getPoint(ray, res.start);
+                } else {
+                    intersection = scene.globe.pick(ray, scene);
+                    if (!intersection) {
+                        const res = Cesium.IntersectionTests.rayEllipsoid(ray, scene.globe.ellipsoid);
+                        if (Cesium.defined(res) && isFinite(res.start) && res.start > 0)
+                            intersection = Cesium.Ray.getPoint(ray, res.start);
+                    }
+                }
+
+                if (!intersection) {
+                    // One ray missed — bail out entirely
+                    return [null, null];
+                }
+
+                grid.push(intersection);
+            }
+        }
+
+        // Platform position (unchanged)
+        const rotMatrix = Cesium.Matrix3.fromQuaternion(platformOrientation);
+        const localOffset = new Cesium.Cartesian3(
+            this.#sensorRelativePosition[0],
+            this.#sensorRelativePosition[1],
+            this.#sensorRelativePosition[2]
+        );
+        const worldOffset = Cesium.Matrix3.multiplyByVector(
+            rotMatrix, localOffset, new Cesium.Cartesian3()
+        );
+        const platformPosition = Cesium.Cartesian3.add(sensorPos, worldOffset, new Cesium.Cartesian3());
+
+        return [grid, platformPosition];
+    }
+
+    // -----------------------------
+    // WARP
+    // -----------------------------
+    #warpImageToPolygon(activeCanvas, grid) {
+        if (!this.#baseVideo || this.#baseVideo.readyState < 1
+            || !this.#perspectiveA || !grid) return;
+
+        const N = Footprint.#GRID_N;
+        const cartographics = grid.map(c => Cesium.Cartographic.fromCartesian(c));
+
+        const lons = cartographics.map(c => c.longitude);
+        const lats = cartographics.map(c => c.latitude);
+        const minLon = Math.min(...lons), maxLon = Math.max(...lons);
+        const minLat = Math.min(...lats), maxLat = Math.max(...lats);
+        const wLon = Math.max(maxLon - minLon, 1e-9);
+        const hLat = Math.max(maxLat - minLat, 1e-9);
+
+        // Map all N×N grid points into canvas pixel space
+        const dstPoints = cartographics.map(c => [
+            ((c.longitude - minLon) / wLon) * activeCanvas.width,
+            ((maxLat - c.latitude)  / hLat) * activeCanvas.height,
+        ]);
+
+        if (this.#curCanvas === "a") {
+            this.#canvasContextA.clearRect(0, 0, this.#canvasA.width, this.#canvasA.height);
+            this.#perspectiveA.draw(dstPoints);
+        } else {
+            this.#canvasContextB.clearRect(0, 0, this.#canvasB.width, this.#canvasB.height);
+            this.#perspectiveB.draw(dstPoints);
+        }
+    }
+
+    // -----------------------------
+    // UNCHANGED MATH HELPERS
+    // -----------------------------
     #computeSensorPosition(metadata) {
         const sensorLat = toDecimal(metadata["Sensor Latitude"]);
         const sensorLon = toDecimal(metadata["Sensor Longitude"]);
@@ -386,8 +526,8 @@ class Footprint {
 
     #computePlatformOrientation(metadata, sensorPos) {
         const platformHeading = toDecimal(metadata["Platform Heading Angle"]) ?? 0;
-        const platformPitch = toDecimal(metadata["Platform Pitch Angle"]) ?? 0;
-        const platformRoll = toDecimal(metadata["Platform Roll Angle"]) ?? 0;
+        const platformPitch   = toDecimal(metadata["Platform Pitch Angle"])   ?? 0;
+        const platformRoll    = toDecimal(metadata["Platform Roll Angle"])    ?? 0;
         const platformHpr = new HeadingPitchRoll(
             toRad(platformHeading.plus(-90)),
             toRad(platformPitch),
@@ -401,172 +541,52 @@ class Footprint {
         return multiplyMatrix3ByVector(rotationMatrix, vec, new Cesium.Cartesian3());
     }
 
-
-    // unchanged except intersection logic
-    #computeCornerIntersections(metadata, sensorPos, platformOrientation) {
-        const sensorAzimuth = toRad(toDecimal(metadata["Sensor Relative Azimuth Angle"]) ?? 0);
-        const sensorElevation = toRad(toDecimal(metadata["Sensor Relative Elevation Angle"]) ?? 0);
-        const sensorRoll = toRad(toDecimal(metadata["Sensor Relative Roll Angle"]) ?? 0);
-
-        const hFov = toRad((toDecimal(metadata["Sensor Horizontal Field of View"] ?? metadata["Sensor Horizontal FOV"])) ?? 0);
-        const vFov = toRad((toDecimal(metadata["Sensor Vertical Field of View"] ?? metadata["Sensor Vertical FOV"])) ?? 0);
-
-        const halfHFov = toDecimal(hFov).div(2);
-        const halfVFov = toDecimal(vFov).div(2);
-
-        const cornersLocal = [
-            new Cesium.Cartesian3(1, Decimal.tan(halfHFov).toNumber(),  Decimal.tan(halfVFov).toNumber()),
-            new Cesium.Cartesian3(1, Decimal.tan(-halfHFov).toNumber(), Decimal.tan(halfVFov).toNumber()),
-            new Cesium.Cartesian3(1, Decimal.tan(-halfHFov).toNumber(), Decimal.tan(-halfVFov).toNumber()),
-            new Cesium.Cartesian3(1, Decimal.tan(halfHFov).toNumber(),  Decimal.tan(-halfVFov).toNumber())
-        ];
-
-        const scene = this.#viewer.scene;
-        let cornerIntersections = [];
-
-        for (let i = 0; i < cornersLocal.length; i++) {
-            const cornerHpr = new HeadingPitchRoll(
-                toDecimal(sensorAzimuth),
-                toDecimal(sensorElevation),
-                toDecimal(sensorRoll)
-            );
-
-            const rotMat = matrix3fromHeadingPitchRoll(cornerHpr);
-            let forwardLocal = multiplyMatrix3ByVector(rotMat, cornersLocal[i], new Cesium.Cartesian3());
-            const forwardWorld = this.#rotateVectorByQuaternion(forwardLocal, platformOrientation);
-            const ray = new Cesium.Ray(sensorPos, {
-                x: forwardWorld.x.toNumber(),
-                y: forwardWorld.y.toNumber(),
-                z: forwardWorld.z.toNumber()
-            });
-
-            let intersection;
-
-            // NEW LOGIC for intersectionWith
-            if (this.#intersectionWith === "ellipsoid") {
-                const ellipsoid = scene.globe.ellipsoid;
-                const res = Cesium.IntersectionTests.rayEllipsoid(ray, ellipsoid);
-                if (Cesium.defined(res)) {
-                    const t = res.start;
-                    if (isFinite(t) && t > 0) intersection = Cesium.Ray.getPoint(ray, t);
-                }
-            } else {
-                // terrain first
-                intersection = scene.globe.pick(ray, scene);
-                if (!intersection) {
-                    const ellipsoid = scene.globe.ellipsoid;
-                    const res = Cesium.IntersectionTests.rayEllipsoid(ray, ellipsoid);
-                    if (Cesium.defined(res)) {
-                        const t = res.start;
-                        if (isFinite(t) && t > 0) intersection = Cesium.Ray.getPoint(ray, t);
-                    }
-                }
-            }
-
-            if (intersection) {
-                cornerIntersections.push(intersection);
-            } else {
-                cornerIntersections = [];
-                break;
-            }
-        }
-
-        const rotMatrix = Cesium.Matrix3.fromQuaternion(platformOrientation);
-        const localForward = new Cesium.Cartesian3(this.#sensorRelativePosition[0], this.#sensorRelativePosition[1], this.#sensorRelativePosition[2]);
-        const worldForward = Cesium.Matrix3.multiplyByVector(rotMatrix, localForward, new Cesium.Cartesian3());
-        const platformPosition = Cesium.Cartesian3.add(sensorPos, worldForward, new Cesium.Cartesian3());
-
-        return [cornerIntersections, platformPosition];
-    }
-
     #computeMouseRay() {
-        if (!this.#mousePosition || !this.#viewer || !this.#snapshotSensorPos) {
-            return;
-        }
+        if (!this.#mousePosition || !this.#viewer || !this.#snapshotSensorPos) return;
 
-        const scene = this.#viewer.scene;
-        const metadata = this.#metadata; // assumes same structure used in computeCornerIntersections
+        const scene    = this.#viewer.scene;
+        const metadata = this.#metadata;
         const platformOrientation = this.#platformOrientation;
 
-        // Retrieve and convert sensor orientation angles
-        const sensorAzimuth = toRad(toDecimal(metadata["Sensor Relative Azimuth Angle"]) ?? 0);
+        const sensorAzimuth   = toRad(toDecimal(metadata["Sensor Relative Azimuth Angle"])   ?? 0);
         const sensorElevation = toRad(toDecimal(metadata["Sensor Relative Elevation Angle"]) ?? 0);
-        const sensorRoll = toRad(toDecimal(metadata["Sensor Relative Roll Angle"]) ?? 0);
+        const sensorRoll      = toRad(toDecimal(metadata["Sensor Relative Roll Angle"])      ?? 0);
 
-        // Retrieve field of view
         const hFov = toRad((toDecimal(metadata["Sensor Horizontal Field of View"] ?? metadata["Sensor Horizontal FOV"])) ?? 0);
-        const vFov = toRad((toDecimal(metadata["Sensor Vertical Field of View"] ?? metadata["Sensor Vertical FOV"])) ?? 0);
+        const vFov = toRad((toDecimal(metadata["Sensor Vertical Field of View"]   ?? metadata["Sensor Vertical FOV"]))   ?? 0);
 
         const halfHFov = toDecimal(hFov).div(2);
         const halfVFov = toDecimal(vFov).div(2);
 
-        // const nx = 1 - this.#mousePosition[0] * 2; 
-        // const ny = 1 - this.#mousePosition[1] * 2;
-
-        const nx = 1 - this.#mousePosition[0] * 2; 
+        const nx = 1 - this.#mousePosition[0] * 2;
         const ny = 1 - this.#mousePosition[1] * 2;
 
-        // Compute tangent of offset angles (same basis as cornersLocal)
         const localDir = new Cesium.Cartesian3(
             1,
             Decimal.tan(nx * halfHFov).toNumber(),
             Decimal.tan(ny * halfVFov).toNumber()
         );
 
-        // Apply sensor orientation
         const cornerHpr = new HeadingPitchRoll(
             toDecimal(sensorAzimuth),
             toDecimal(sensorElevation),
             toDecimal(sensorRoll)
         );
         const rotMat = matrix3fromHeadingPitchRoll(cornerHpr);
-        let forwardLocal = multiplyMatrix3ByVector(rotMat, localDir, new Cesium.Cartesian3());
-
-        // Rotate by platform orientation
+        const forwardLocal = multiplyMatrix3ByVector(rotMat, localDir, new Cesium.Cartesian3());
         const forwardWorld = this.#rotateVectorByQuaternion(forwardLocal, platformOrientation);
 
-        // Build the ray
         const ray = new Cesium.Ray(this.#snapshotSensorPos, {
             x: forwardWorld.x,
             y: forwardWorld.y,
             z: forwardWorld.z
         });
 
-        // Compute ray end point 20,000 m ahead
         const distance = 20000.0;
-        const rayEnd = Cesium.Cartesian3.add(
+        this.#mouseRayEnd = Cesium.Cartesian3.add(
             ray.origin,
             Cesium.Cartesian3.multiplyByScalar(ray.direction, distance, new Cesium.Cartesian3()),
             new Cesium.Cartesian3()
         );
-
-        this.#mouseRayEnd = rayEnd;
     }
-
-    #warpImageToPolygon(activeCanvas, cornerIntersections) {
-        if (!this.#baseVideo || this.#baseVideo.readyState < 1 || !this.#perspectiveA || !cornerIntersections) return;
-
-        const cartographics = cornerIntersections.map(c => Cesium.Cartographic.fromCartesian(c));
-        const lons = cartographics.map(c => c.longitude);
-        const lats = cartographics.map(c => c.latitude);
-        const minLon = Math.min(...lons);
-        const maxLon = Math.max(...lons);
-        const minLat = Math.min(...lats);
-        const maxLat = Math.max(...lats);
-        const width = Math.max(maxLon - minLon, 1e-9);
-        const height = Math.max(maxLat - minLat, 1e-9);
-        const dstRaw = cartographics.map(c => [
-            ((c.longitude - minLon) / width) * activeCanvas.width,
-            ((maxLat - c.latitude) / height) * activeCanvas.height,
-        ]);
-
-        if (this.#curCanvas === "a") {
-            this.#canvasContextA.clearRect(0, 0, this.#canvasA.width, this.#canvasA.height);
-            this.#perspectiveA.draw(dstRaw);
-        } else {
-            this.#canvasContextB.clearRect(0, 0, this.#canvasB.width, this.#canvasB.height);
-            this.#perspectiveB.draw(dstRaw);
-        }
-    }
-
 }

@@ -1,108 +1,107 @@
-async function addDraggablePolygon(viewer) {
-  // Initial 4 corners (lon, lat)
-  const positions = [
-    Cesium.Cartesian3.fromDegrees(-75, 35),
-    Cesium.Cartesian3.fromDegrees(-75, 40),
-    Cesium.Cartesian3.fromDegrees(-70, 40),
-    Cesium.Cartesian3.fromDegrees(-70, 35),
-  ];
+async function addDraggablePolygon(viewer, N = 4) {
+  // Build NxN grid of (lon, lat) spanning a default region
+  // Grid is stored row-major: index = row*N + col
+  const lonMin = -75, lonMax = -70;
+  const latMin =  35, latMax =  40;
 
-  // Create draggable points
-  const points = positions.map(pos =>
+  const positions = [];
+  for (let row = 0; row < N; row++) {
+    for (let col = 0; col < N; col++) {
+      const lon = lonMin + (col / (N - 1)) * (lonMax - lonMin);
+      const lat = latMax - (row / (N - 1)) * (latMax - latMin); // top-row = high lat
+      positions.push(Cesium.Cartesian3.fromDegrees(lon, lat));
+    }
+  }
+
+  // Draggable point entities
+  const points = positions.map((pos, i) =>
     viewer.entities.add({
       position: pos,
-      point: { pixelSize: 10, color: Cesium.Color.RED },
+      point: {
+        pixelSize: N <= 4 ? 10 : 7,
+        color: Cesium.Color.RED,
+        outlineColor: Cesium.Color.WHITE,
+        outlineWidth: 1,
+      },
     })
   );
 
-  // Two canvases for swapping
+  // Double-buffered canvases
   const canvasA = document.createElement("canvas");
   const canvasB = document.createElement("canvas");
   canvasA.width = canvasB.width = 1024;
   canvasA.height = canvasB.height = 1024;
-
-  // Append for debugging (optional)
-  canvasA.style.position = canvasB.style.position = "absolute";
-  canvasA.style.top = canvasB.style.top = "-9999px";
-  document.body.appendChild(canvasA);
-  document.body.appendChild(canvasB);
+  canvasA.style.cssText = canvasB.style.cssText = "position:absolute;top:-9999px";
+  document.body.append(canvasA, canvasB);
 
   let curCanvas = "a";
-  // const baseImage = new Image();
-  // baseImage.src = "nature.jpg";
-  
-  const videoElement = await loadVideo("truck.mp4");
 
-  // Create contexts and initialize Perspective ONCE
+  const videoElement = await loadVideo("raw/videos/truck.mp4");
+
   const ctxA = canvasA.getContext("2d");
   const ctxB = canvasB.getContext("2d");
-  const perspectiveA = new Perspective(ctxA, videoElement);
-  const perspectiveB = new Perspective(ctxB, videoElement);
+  const perspA = new Perspective(ctxA, videoElement, N);
+  const perspB = new Perspective(ctxB, videoElement, N);
+
+  // --- helpers ---
 
   function getCartographics() {
+    const now = Cesium.JulianDate.now();
     return points.map(p =>
-      Cesium.Cartographic.fromCartesian(
-        p.position.getValue(Cesium.JulianDate.now())
-      )
+      Cesium.Cartographic.fromCartesian(p.position.getValue(now))
     );
   }
 
-  /** Warp and redraw into the "current" canvas */
   function warpImageToPolygon(activeCanvas) {
-    // if (!baseImage.complete) return;
-
     const ctx = activeCanvas.getContext("2d");
     ctx.clearRect(0, 0, activeCanvas.width, activeCanvas.height);
 
-    const cartographics = getCartographics();
-    if (cartographics.some(c => !c)) return;
+    const carts = getCartographics();
+    if (carts.some(c => !c)) return;
 
-    const lons = cartographics.map(c => c.longitude);
-    const lats = cartographics.map(c => c.latitude);
-
-    const minLon = Math.min(...lons);
-    const maxLon = Math.max(...lons);
-    const minLat = Math.min(...lats);
-    const maxLat = Math.max(...lats);
+    const lons = carts.map(c => c.longitude);
+    const lats = carts.map(c => c.latitude);
+    const minLon = Math.min(...lons), maxLon = Math.max(...lons);
+    const minLat = Math.min(...lats), maxLat = Math.max(...lats);
 
     const eps = 1e-9;
-    const width = Math.max(maxLon - minLon, eps);
-    const height = Math.max(maxLat - minLat, eps);
+    const wLon = Math.max(maxLon - minLon, eps);
+    const hLat = Math.max(maxLat - minLat, eps);
 
-    // Map vertices into canvas space
-    const dstRaw = cartographics.map(c => [
-      ((c.longitude - minLon) / width) * activeCanvas.width,
-      ((maxLat - c.latitude) / height) * activeCanvas.height,
+    // Map every grid point into canvas pixel space [0, canvasSize]
+    const dstPoints = carts.map(c => [
+      ((c.longitude - minLon) / wLon) * activeCanvas.width,
+      ((maxLat - c.latitude) / hLat) * activeCanvas.height,
     ]);
 
-    const dstOrdered = dstRaw;
-    if (!dstOrdered) return;
-
-    // Use the correct pre-initialized Perspective instance
-    if (activeCanvas === canvasA) {
-      perspectiveA.draw(dstOrdered);
-    } else {
-      perspectiveB.draw(dstOrdered);
-    }
+    const persp = activeCanvas === canvasA ? perspA : perspB;
+    persp.draw(dstPoints);
   }
 
-  // CallbackProperty returning alternating canvases
   function canvasCallback() {
-    const activeCanvas = curCanvas === "a" ? canvasA : canvasB;
-    warpImageToPolygon(activeCanvas);
+    const active = curCanvas === "a" ? canvasA : canvasB;
+    warpImageToPolygon(active);
     curCanvas = curCanvas === "a" ? "b" : "a";
-    return activeCanvas; // <-- return actual canvas element
+    return active;
   }
 
-  // Polygon entity with dynamic canvas
-  const poly = viewer.entities.add({
+  // Polygon using all NxN points as a convex hull
+  // For a grid we build a PolygonHierarchy from the outline path
+  function getOutlinePositions() {
+    const now = Cesium.JulianDate.now();
+    // Walk the border: top row L→R, right col T→B, bottom row R→L, left col B→T
+    const outline = [];
+    for (let col = 0; col < N; col++)          outline.push(points[0 * N + col]);
+    for (let row = 1; row < N; row++)          outline.push(points[row * N + (N - 1)]);
+    for (let col = N - 2; col >= 0; col--)     outline.push(points[(N - 1) * N + col]);
+    for (let row = N - 2; row >= 1; row--)     outline.push(points[row * N + 0]);
+    return outline.map(p => p.position.getValue(now));
+  }
+
+  viewer.entities.add({
     polygon: {
-      hierarchy: new Cesium.CallbackProperty(() => {
-        // Get the live positions of the 4 draggable points
-        return new Cesium.PolygonHierarchy(points.map(p =>
-          p.position.getValue(Cesium.JulianDate.now())
-        ));
-      }, false),
+      hierarchy: new Cesium.CallbackProperty(() =>
+        new Cesium.PolygonHierarchy(getOutlinePositions()), false),
       material: new Cesium.ImageMaterialProperty({
         image: new Cesium.CallbackProperty(canvasCallback, false),
         transparent: true,
@@ -112,7 +111,7 @@ async function addDraggablePolygon(viewer) {
     },
   });
 
-  // Dragging interaction
+  // --- drag interaction ---
   let picked;
   const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
 
@@ -126,21 +125,15 @@ async function addDraggablePolygon(viewer) {
 
   handler.setInputAction(movement => {
     if (!picked) return;
-
     let cartesian;
     try {
-      if (viewer.scene.pickPositionSupported) {
+      if (viewer.scene.pickPositionSupported)
         cartesian = viewer.scene.pickPosition(movement.endPosition);
-      }
-    } catch {
-      cartesian = undefined;
-    }
-    if (!Cesium.defined(cartesian)) {
+    } catch { cartesian = undefined; }
+    if (!Cesium.defined(cartesian))
       cartesian = viewer.camera.pickEllipsoid(
-        movement.endPosition,
-        viewer.scene.globe.ellipsoid
+        movement.endPosition, viewer.scene.globe.ellipsoid
       );
-    }
     if (Cesium.defined(cartesian)) {
       picked.position = cartesian;
       viewer.scene.requestRender();
@@ -151,9 +144,4 @@ async function addDraggablePolygon(viewer) {
     picked = undefined;
     viewer.scene.screenSpaceCameraController.enableInputs = true;
   }, Cesium.ScreenSpaceEventType.LEFT_UP);
-
-  // Initial draw
-  // baseImage.onload = () => {
-  //   viewer.scene.requestRender();
-  // };
 }
